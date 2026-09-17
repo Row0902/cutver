@@ -4,6 +4,7 @@ use thiserror::Error;
 pub mod cargo_toml;
 pub mod gradle;
 pub mod json;
+pub mod json_scan;
 pub mod regex;
 
 #[derive(Debug, Error)]
@@ -12,6 +13,8 @@ pub enum Error {
     Parse { kind: &'static str, detail: String },
     #[error("field '{0}' not found")]
     FieldNotFound(String),
+    #[error("field '{0}' is not a string")]
+    NotAString(String),
     #[error("invalid version string '{0}': {1}")]
     InvalidVersion(String, semver::Error),
     #[error("target '{0}' not found")]

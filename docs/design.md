@@ -89,7 +89,7 @@ require_branch = "main"        # optional guard
 
 | Kind | Format | Mechanism |
 | :--- | :--- | :--- |
-| `json` | `*.json` | `serde_json`, edit by field path (dotted or pointer) |
+| `json` | `*.json` | format-preserving targeted edit: `serde_json` for reads, byte-span locator for writes (order/indentation/newline untouched) |
 | `toml` | generic TOML | `toml_edit` — format- and comment-preserving |
 | `cargo-package` | `Cargo.toml` | `toml_edit` on `[package] version` |
 | `gradle` | `build.gradle.kts` | targeted `versionName` (string) + `versionCode` (int) edit |
