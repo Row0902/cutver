@@ -15,15 +15,15 @@ spacing, no new dependency, no preserve_order feature needed.
 
 ## Tasks
 
-- [ ] J1. `src/manifest/json_scan.rs`: structural scanner that locates the
+- [x] J1. `src/manifest/json_scan.rs`: structural scanner that locates the
       byte span of the string value at a dotted field path in raw JSON text
       (object key path traversal, arrays by index, string-escape aware),
       with unit tests (top-level, nested, arrays, duplicate key names in
       sibling branches, escaped strings, missing path errors).
-- [ ] J2. Wire into `src/manifest/json.rs` `write_version`: replace only the
+- [x] J2. Wire into `src/manifest/json.rs` `write_version`: replace only the
       located value span; update/extend unit tests (order preservation,
       newline preservation, indentation preservation, failure cases).
-- [ ] J3. End-to-end verification: repro fixture with unsorted keys + no
+- [x] J3. End-to-end verification: repro fixture with unsorted keys + no
       trailing newline must produce a diff containing only the version line;
       update design.md manifest table wording; close issue #4 with comment.
 
@@ -31,3 +31,4 @@ spacing, no new dependency, no preserve_order feature needed.
 
 | Task | Commit | Checks |
 | --- | --- | --- |
+| J1-J3 | 8f1dcde | cargo test: 78 passed (4 suites); repro verificado con binario: diff de solo la línea de version, orden y newline preservados; issue #4 cerrado |
