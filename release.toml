@@ -1,0 +1,24 @@
+# cutver's own release configuration — dogfooding.
+# Every future bump of this crate runs through this tool.
+
+[version]
+current_source = "Cargo.toml"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[preflight]
+tests = "cargo test"
+default_timeout = 600
+
+[changelog]
+path = "CHANGELOG.md"
+format = "keep-a-changelog"
+entry_template = "See commit history since the previous tag."
+
+[git]
+tag_prefix = "v"
+commit_message = "chore(release): v{version}"
+require_clean_tree = true
+require_branch = "main"
