@@ -14,14 +14,15 @@ directory. CLI `-c` override keeps working from anywhere.
 
 ## Tasks (running in background)
 
-- [ ] K1. Thread the config directory through `run`/`doctor`; resolve all
+- [x] K1. Thread the config directory through `run`/`doctor`; resolve all
       manifest paths and repo root relative to it (not cwd).
-- [ ] K2. Extract single shared `current_source` lookup used by `run` and
+- [x] K2. Extract single shared `current_source` lookup used by `run` and
       `doctor`; remove duplicated error-mapping blocks.
-- [ ] K3. Tests: unit tests for path resolution; e2e test invoking the
+- [x] K3. Tests: unit tests for path resolution; e2e test invoking the
       pipeline from a subdirectory; full suite green; close issue #5.
 
 ## Evidence log
 
 | Task | Commit | Checks |
 | --- | --- | --- |
+| K1-K3 | ca5c19d | cargo test: 82 passed (4 suites); smoke desde sub/: doctor descubre ../release.toml, bump muta el archivo correcto |
