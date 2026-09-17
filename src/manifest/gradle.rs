@@ -26,7 +26,10 @@ impl ManifestEditor for GradleEditor {
         let cap = re
             .captures(content)
             .ok_or_else(|| Error::TargetNotFound(self.version_name_field.clone()))?;
-        let s = cap.get(1).unwrap().as_str();
+        let s = cap
+            .get(1)
+            .ok_or_else(|| Error::TargetNotFound(self.version_name_field.clone()))?
+            .as_str();
         Version::parse(s).map_err(|e| Error::InvalidVersion(s.into(), e))
     }
 
@@ -50,7 +53,18 @@ impl ManifestEditor for GradleEditor {
         let cap = code_re
             .captures(&out)
             .ok_or_else(|| Error::TargetNotFound(self.version_code_field.clone()))?;
-        let code: u64 = cap.get(1).unwrap().as_str().parse().unwrap();
+        let code: u64 = cap
+            .get(1)
+            .ok_or_else(|| Error::TargetNotFound(self.version_code_field.clone()))?
+            .as_str()
+            .parse()
+            .map_err(|e| Error::Parse {
+                kind: "gradle",
+                detail: format!(
+                    "{} is not a valid integer: {e}",
+                    self.version_code_field
+                ),
+            })?;
         let result =
             code_re.replace_all(&out, format!(r#"{} {}"#, self.version_code_field, code + 1));
 

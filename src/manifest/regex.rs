@@ -25,8 +25,9 @@ impl ManifestEditor for RegexEditor {
             .ok_or_else(|| Error::NoMatch(self.pattern.clone()))?;
         let s = cap
             .get(1)
-            .map(|m| m.as_str())
-            .unwrap_or_else(|| cap.get(0).unwrap().as_str());
+            .or_else(|| cap.get(0))
+            .ok_or_else(|| Error::NoMatch(self.pattern.clone()))?
+            .as_str();
         Version::parse(s).map_err(|e| Error::InvalidVersion(s.into(), e))
     }
 
