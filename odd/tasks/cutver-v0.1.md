@@ -38,13 +38,19 @@ Constraints (from design.md):
 ## Evidence log
 
 | Task | Commit | Checks |
-| --- | --- | --- |
-| T1 | a4f2b44 | cargo build ok (39 crates) |
+| --- | --- | --- || T1 | a4f2b44 | cargo build ok (39 crates) |
 | T2+T3 | adcc917 | RUSTFLAGS=-D warnings cargo test: 12 passed |
 | T4+T5 | 6dc8462 | cargo test: 37 passed (3 suites); regex dep added for gradle/regex editors |
 | T6+T7 | e851c95 | cargo test: 48 passed (3 suites) |
 | T8+T9 | 3706dc9 | cargo test: 61 passed (3 suites); fixture smoke: bump minor 1.2.3→1.3.0 en 3 manifests + tag v1.3.0, versionCode 42→43 |
 | T10 | f3bb46f | cargo test: 64 passed (4 suites, incl. e2e happy/abort/dry-run) |
+
+## Native review
+
+- Candidate: committed range 4f37391..HEAD (full v0.1), 21 files, 2594 lines.
+- Lineage: review-27ee2d4ca1e46eea — tier HIGH (process boundary in tests/e2e.rs).
+- Outcome: APPROVED with 24 non-blocking (informational) findings; authority burned.
+- Notable follow-ups (non-blocking): preflight has no timeout (R4), bump pipeline is not atomic on partial failure — commits manifests sequentially before failure point (R4/R3), tag creation has no retry, manifest paths resolve from cwd not release.toml dir, changelog write not atomic.
 
 ## Out of scope (v0.1)
 
