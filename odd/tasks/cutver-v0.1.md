@@ -50,8 +50,7 @@ Constraints (from design.md):
 - Candidate: committed range 4f37391..HEAD (full v0.1), 21 files, 2594 lines.
 - Lineage: review-27ee2d4ca1e46eea — tier HIGH (process boundary in tests/e2e.rs).
 - Outcome: APPROVED with 24 non-blocking (informational) findings; authority burned.
-- Notable follow-ups (non-blocking): preflight has no timeout (R4), bump pipeline is not atomic on partial failure — commits manifests sequentially before failure point (R4/R3), tag creation has no retry, manifest paths resolve from cwd not release.toml dir, changelog write not atomic.
-
+- Notable follow-ups (non-blocking): tracked as GitHub issues #1-#8 (atomicity, preflight timeout, tag idempotency, JSON format preservation, config-relative paths, changelog atomic write, type cleanup, silent e2e skip).
 ## Out of scope (v0.1)
 
 - Push/publish automation, release-notes generation, multi-profile.
