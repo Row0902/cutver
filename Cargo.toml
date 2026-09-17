@@ -2,6 +2,13 @@
 name = "cutver"
 version = "0.1.0"
 edition = "2024"
+authors = ["Row0902"]
+description = "Cut a release. Bump SemVer. Every project, every language."
+license = "MIT"
+repository = "https://github.com/Row0902/cutver"
+keywords = ["release", "semver", "version", "changelog", "tag"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["odd/"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
