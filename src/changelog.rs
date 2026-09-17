@@ -1,3 +1,4 @@
+use crate::atomic;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -7,17 +8,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to read changelog '{path}': {source}")]
-    Read {
-        path: String,
-        #[source]
-        source: io::Error,
-    },
+    Read { path: String, #[source] source: io::Error },
     #[error("failed to write changelog '{path}': {source}")]
-    Write {
-        path: String,
-        #[source]
-        source: io::Error,
-    },
+    Write { path: String, #[source] source: atomic::Error },
 }
 
 /// Prepend a new keep-a-changelog section for `version` to `path`.
@@ -43,7 +36,7 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
     };
 
     let updated = insert_section(&content, &section);
-    fs::write(path, updated).map_err(|e| Error::Write { path: path_str, source: e })
+    atomic::write_atomic(path, updated).map_err(|e| Error::Write { path: path_str, source: e })
 }
 
 fn insert_section(content: &str, section: &str) -> String {

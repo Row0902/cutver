@@ -82,12 +82,16 @@ require_clean_tree = true
     initial_commit(fixture);
 }
 
+fn assert_versions_at_123(fixture: &Fixture) {
+    assert!(fixture.read("package.json").contains("\"version\": \"1.2.3\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.3\""));
+    let gradle = fixture.read("android/build.gradle.kts");
+    assert!(gradle.contains("versionName \"1.2.3\"") && gradle.contains("versionCode 42"));
+}
+
 #[test]
 fn bump_minor_happy_path() {
-    if !git_available() {
-        return;
-    }
-
+    if !git_available() { return; }
     let guard = FixtureGuard::new("happy");
     write_fixture(&guard, "true");
 
@@ -102,8 +106,7 @@ fn bump_minor_happy_path() {
     assert!(fixture.read("Cargo.toml").contains("version = \"1.3.0\""));
 
     let gradle = fixture.read("android/build.gradle.kts");
-    assert!(gradle.contains("versionName \"1.3.0\""));
-    assert!(gradle.contains("versionCode 43"));
+    assert!(gradle.contains("versionName \"1.3.0\"") && gradle.contains("versionCode 43"));
 
     let changelog = fixture.read("CHANGELOG.md");
     let today = cutver::changelog::format_date(SystemTime::now());
@@ -115,15 +118,7 @@ fn bump_minor_happy_path() {
 
     let mut files = head_commit_files(fixture);
     files.sort();
-    assert_eq!(
-        files,
-        vec![
-            "CHANGELOG.md",
-            "Cargo.toml",
-            "android/build.gradle.kts",
-            "package.json",
-        ]
-    );
+    assert_eq!(files, vec!["CHANGELOG.md", "Cargo.toml", "android/build.gradle.kts", "package.json"]);
 
     assert!(tag_exists(fixture, "v1.3.0"));
     assert!(is_annotated_tag(fixture, "v1.3.0"));
@@ -131,51 +126,54 @@ fn bump_minor_happy_path() {
 
 #[test]
 fn bump_aborts_when_preflight_fails() {
-    if !git_available() {
-        return;
-    }
-
+    if !git_available() { return; }
     let guard = FixtureGuard::new("preflight-fail");
     write_fixture(&guard, "false");
 
     let cfg = config::load("release.toml").unwrap();
-    let result = bump_run(&cfg, Bump::Minor, false, &[]);
-    assert!(result.is_err(), "expected bump to fail when preflight fails");
+    assert!(bump_run(&cfg, Bump::Minor, false, &[]).is_err(), "expected bump to fail when preflight fails");
 
     let fixture = guard.fixture();
-    assert!(fixture.read("package.json").contains("\"version\": \"1.2.3\""));
-    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.3\""));
-
-    let gradle = fixture.read("android/build.gradle.kts");
-    assert!(gradle.contains("versionName \"1.2.3\""));
-    assert!(gradle.contains("versionCode 42"));
-
+    assert_versions_at_123(fixture);
     assert_eq!(commit_count(fixture), 1);
     assert!(!tag_exists(fixture, "v1.3.0"));
 }
 
 #[test]
 fn bump_dry_run_performs_no_mutation() {
-    if !git_available() {
-        return;
-    }
-
+    if !git_available() { return; }
     let guard = FixtureGuard::new("dry-run");
     write_fixture(&guard, "true");
 
     let cfg = config::load("release.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
-
     assert!(summary.dry_run);
 
     let fixture = guard.fixture();
-    assert!(fixture.read("package.json").contains("\"version\": \"1.2.3\""));
-    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.3\""));
-
-    let gradle = fixture.read("android/build.gradle.kts");
-    assert!(gradle.contains("versionName \"1.2.3\""));
-    assert!(gradle.contains("versionCode 42"));
-
+    assert_versions_at_123(fixture);
     assert_eq!(commit_count(fixture), 1);
     assert!(!tag_exists(fixture, "v1.3.0"));
+}
+
+#[test]
+fn bump_aborts_when_release_tag_exists_elsewhere() {
+    if !git_available() { return; }
+    let guard = FixtureGuard::new("tag-conflict");
+    write_fixture(&guard, "true");
+
+    let fixture = guard.fixture();
+    fixture.write("extra.txt", "x");
+    run_git_ok(&fixture.dir, &["add", "-A"]);
+    run_git_ok(&fixture.dir, &["commit", "-m", "second", "-q"]);
+
+    let first = String::from_utf8_lossy(&run_git(&fixture.dir, &["rev-list", "--max-parents=0", "HEAD"]).stdout).trim().to_string();
+    run_git_ok(&fixture.dir, &["tag", "v1.3.0", &first]);
+
+    let cfg = config::load("release.toml").unwrap();
+    let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
+    assert!(err.to_string().contains("v1.3.0"), "error should name the conflicting tag");
+
+    assert_versions_at_123(fixture);
+    assert_eq!(commit_count(fixture), 2);
+    assert!(!tag_exists(fixture, "v1.4.0"));
 }

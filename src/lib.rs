@@ -1,3 +1,4 @@
+pub mod atomic;
 pub mod bump;
 pub mod changelog;
 pub mod cli;

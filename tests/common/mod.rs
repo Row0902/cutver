@@ -97,6 +97,8 @@ pub fn init_git_repo(fixture: &Fixture) {
     run_git_ok(dir, &["init"]);
     run_git_ok(dir, &["config", "user.email", "test@example.com"]);
     run_git_ok(dir, &["config", "user.name", "Test User"]);
+    run_git_ok(dir, &["config", "commit.gpgsign", "false"]);
+    run_git_ok(dir, &["config", "tag.gpgsign", "false"]);
 }
 
 pub fn initial_commit(fixture: &Fixture) {

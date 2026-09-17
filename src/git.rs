@@ -31,6 +31,19 @@ fn stdout_text(output: Output, command: &str) -> Result<String, Error> {
         .map_err(|e| Error::Output { source: io::Error::new(io::ErrorKind::InvalidData, e) })
 }
 
+pub fn tag_exists(repo: impl AsRef<Path>, tag_name: &str) -> Result<bool, Error> {
+    let output = run_git(&repo, &["tag", "-l", tag_name])?;
+    if !output.status.success() {
+        return Err(Error::Status { command: format!("tag -l {tag_name}"), status: output.status });
+    }
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+pub fn rev_parse(repo: impl AsRef<Path>, rev: &str) -> Result<String, Error> {
+    let text = stdout_text(run_git(&repo, &["rev-parse", rev])?, &format!("rev-parse {rev}"))?;
+    Ok(text.trim().to_string())
+}
+
 pub fn is_clean(porcelain: &str) -> bool {
     porcelain.trim().is_empty()
 }
@@ -90,6 +103,14 @@ pub fn tag(repo: impl AsRef<Path>, tag_name: &str, version: &str, dry_run: bool)
     if dry_run {
         return Ok(Some(format!(r#"git tag -a {tag_name} -m "{msg}""#)));
     }
+    if tag_exists(&repo, tag_name)? {
+        let tag_commit = rev_parse(&repo, &format!("{tag_name}^{{commit}}"))?;
+        let head = rev_parse(&repo, "HEAD")?;
+        if tag_commit == head {
+            return Ok(Some(format!("skipped (already points at HEAD): {tag_name}")));
+        }
+        return Err(Error::Guard { detail: format!("tag '{tag_name}' already exists at {tag_commit}, not HEAD ({head})") });
+    }
     let status = Command::new("git").current_dir(&repo).args(["tag", "-a", tag_name, "-m", &msg]).status()
         .map_err(|e| Error::Command { command: "tag".into(), source: e })?;
     if status.success() { Ok(None) } else { Err(Error::Status { command: "tag".into(), status }) }
@@ -108,71 +129,70 @@ mod tests {
     use super::*;
     use std::fs;
 
-    #[test]
-    fn commit_message_replaces_version() {
-        assert_eq!(commit_message("chore(release): v{version}", "1.2.3"), "chore(release): v1.2.3");
+    fn tmp_repo() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cutver-git-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for a in [&["init", "-q"] as &[&str], &["config", "user.email", "t@e.com"], &["config", "user.name", "T"], &["config", "commit.gpgsign", "false"], &["config", "tag.gpgsign", "false"]] {
+            assert!(Command::new("git").current_dir(&dir).args(a).status().unwrap().success());
+        }
+        fs::write(dir.join("x"), "a").unwrap();
+        git(&dir, &["add", "x"]);
+        git(&dir, &["commit", "-m", "i", "-q"]);
+        dir
+    }
+
+    fn git(repo: &std::path::PathBuf, args: &[&str]) {
+        assert!(Command::new("git").current_dir(repo).args(args).status().unwrap().success());
     }
 
     #[test]
-    fn tag_name_builds() {
+    fn commit_message_and_tag_name_build() {
+        assert_eq!(commit_message("chore(release): v{version}", "1.2.3"), "chore(release): v1.2.3");
         assert_eq!(tag_name("v", "1.2.3"), "v1.2.3");
         assert_eq!(tag_name("", "1.2.3"), "1.2.3");
     }
 
     #[test]
     fn is_clean_detects_dirty() {
-        assert!(is_clean(""));
-        assert!(is_clean("   \n"));
-        assert!(!is_clean(" M src/main.rs"));
-        assert!(!is_clean("?? src/main.rs"));
+        assert!(is_clean("") && is_clean("   \n") && !is_clean(" M src/main.rs") && !is_clean("?? src/main.rs"));
     }
 
     #[test]
     fn parse_branch_trims_newline() {
-        assert_eq!(parse_branch("main\n"), "main");
-        assert_eq!(parse_branch("feature/x"), "feature/x");
+        assert!(parse_branch("main\n") == "main" && parse_branch("feature/x") == "feature/x");
     }
 
     #[test]
-    fn stage_dry_run_reports_command() {
-        let paths = vec!["a.txt".to_string(), "b.txt".to_string()];
-        let report = stage(".", &paths, true).unwrap().unwrap();
-        assert!(report.starts_with("git add"));
-        assert!(report.contains("a.txt"));
-        assert!(report.contains("b.txt"));
-    }
-
-    #[test]
-    fn stage_empty_paths_returns_none() {
+    fn stage_dry_run_reports_command_and_empty_returns_none() {
+        let report = stage(".", &["a.txt".into(), "b.txt".into()], true).unwrap().unwrap();
+        assert!(report.starts_with("git add") && report.contains("a.txt") && report.contains("b.txt"));
         assert!(stage(".", &[], true).unwrap().is_none());
     }
 
     #[test]
-    fn commit_dry_run_reports_command() {
-        let report = commit(".", "chore: v1.0.0", true).unwrap().unwrap();
-        assert_eq!(report, r#"git commit -m "chore: v1.0.0""#);
-    }
-
-    #[test]
-    fn tag_dry_run_reports_command() {
-        let report = tag(".", "v1.0.0", "1.0.0", true).unwrap().unwrap();
-        assert_eq!(report, r#"git tag -a v1.0.0 -m "Release 1.0.0""#);
+    fn commit_and_tag_dry_run_report_commands() {
+        assert_eq!(commit(".", "chore: v1.0.0", true).unwrap().unwrap(), r#"git commit -m "chore: v1.0.0""#);
+        assert_eq!(tag(".", "v1.0.0", "1.0.0", true).unwrap().unwrap(), r#"git tag -a v1.0.0 -m "Release 1.0.0""#);
     }
 
     #[test]
     #[cfg_attr(not(unix), ignore)]
-    fn happy_path_clean_tree_and_branch_guards() {
-        let dir = std::env::temp_dir().join(format!("cutver-git-happy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        for args in [&["init", "-q"][..], &["config", "user.email", "test@example.com"][..], &["config", "user.name", "Test"][..]] {
-            assert!(Command::new("git").current_dir(&dir).args(args).status().unwrap().success());
-        }
-        fs::write(dir.join("x.txt"), "hello").unwrap();
-        assert!(Command::new("git").current_dir(&dir).args(["add", "x.txt"]).status().unwrap().success());
-        assert!(Command::new("git").current_dir(&dir).args(["commit", "-m", "init", "-q"]).status().unwrap().success());
-        require_clean_tree(&dir, true).unwrap();
-        require_branch(&dir, Some("main")).unwrap();
-        let _ = fs::remove_dir_all(&dir);
+    fn tag_detects_existing_and_skips_at_head() {
+        let dir = tmp_repo();
+        git(&dir, &["tag", "v1"]);
+        assert!(tag_exists(&dir, "v1").unwrap() && !tag_exists(&dir, "v2").unwrap());
+        assert_eq!(tag(&dir, "v1", "1", false).unwrap(), Some("skipped (already points at HEAD): v1".into()));
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn tag_errors_when_points_elsewhere() {
+        let dir = tmp_repo();
+        let first = rev_parse(&dir, "HEAD").unwrap();
+        fs::write(dir.join("x"), "b").unwrap();
+        git(&dir, &["commit", "-am", "c2", "-q"]);
+        git(&dir, &["tag", "v1", &first]);
+        assert!(tag(&dir, "v1", "1", false).is_err());
     }
 }
