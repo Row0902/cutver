@@ -34,7 +34,7 @@ Design decisions:
 
 | Task | Commit | Checks |
 | --- | --- | --- |
-| P1-P3 | (uncommitted) | `RUSTFLAGS="-D warnings" cargo test` → 82 passed; `cargo build` → ok |
+| P1-P3 | 49a9d5e | cargo test: 82 passed (4 suites); smoke: tag-exists aborts pre-mutation (exit 1, clean tree, version intact) |
 
 ### Implementation notes
 - Added `src/atomic.rs` with `write_atomic(path, contents)` and unit tests.
@@ -45,10 +45,14 @@ Design decisions:
   tag already points at HEAD and errors when it points elsewhere.
 - `bump::run` aborts early (after computing `next`, before preflight/mutation)
   when the target tag exists and does not point at HEAD.
-- Chose the simpler abort-only/idempotent-skip-via-git::tag semantics: if the
-  tag exists at HEAD, `bump::run` proceeds and lets `git::tag` skip creation.
-  This covers the re-run-after-failed-commit case because a failed commit means
-  no tag was created, so the early check passes and the run can retry.
+- `bump::run` aborts early (after computing `next`, before preflight/mutation)
+  whenever the target tag exists, regardless of where it points. Tightened by
+  the parent after a smoke test showed the original "tag at HEAD" exception was
+  unstable: HEAD moves during the run, so a tag pointing at HEAD at check time
+  fails only after the release commit is created. Final semantics are
+  fail-closed: any pre-existing target tag aborts pre-mutation with an
+  actionable message; the maintainer deletes the tag or bumps deliberately.
+  `git::tag` keeps its skip/error semantics for direct calls.
 - Error context: `Error::Stage`, `Error::Commit`, `Error::Tag { tag, source }`,
   `Error::TagExists { tag, commit }`, `Error::WriteRollback`.
 - Files kept ≤200 lines; `bump.rs` split into `src/bump.rs` (types/re-exports)
