@@ -1,95 +1,79 @@
 use clap::Parser;
+use cutver::bump::{self, Drift, Summary};
 use cutver::cli::{BumpLevel, Cli, Commands};
-use cutver::config::Config;
-use cutver::semver_bump::{Bump, bump};
+use cutver::config;
+use cutver::semver_bump::Bump;
 use std::path::PathBuf;
 use std::process;
 
 fn main() {
-    if let Err(e) = run(Cli::parse()) {
-        eprintln!("Error: {e:?}");
-        process::exit(1);
-    }
+    let code = run(Cli::parse());
+    if code != 0 { process::exit(code); }
 }
 
-fn run(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
+fn run(args: Cli) -> i32 {
     let config_path = args.config.unwrap_or_else(|| PathBuf::from("release.toml"));
-    let config = cutver::config::load(&config_path)?;
-
-    match args.command {
-        Commands::Doctor => {
-            doctor(&config);
-            Ok(())
-        }
-        Commands::Bump {
-            level,
-            dry_run,
-            skip_preflight,
-        } => bump_stub(&config, level, dry_run, &skip_preflight),
+    match config::load(&config_path) {
+        Ok(config) => match args.command {
+            Commands::Doctor => run_doctor(&config),
+            Commands::Bump { level, dry_run, skip_preflight } => run_bump(&config, level, dry_run, &skip_preflight),
+        },
+        Err(e) => { eprintln!("Error loading config: {e}"); 1 }
     }
 }
 
-fn doctor(config: &Config) {
-    println!("release.toml is valid.");
-    println!("  manifests: {}", config.manifest.len());
-    println!("  preflight steps: {}", config.preflight.len());
-    println!("  current source: {}", config.version.current_source);
-}
-
-fn bump_stub(
-    config: &Config,
-    level: BumpLevel,
-    dry_run: bool,
-    skip_preflight: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let bump_kind = match level {
+fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_preflight: &[String]) -> i32 {
+    let kind = match level {
         BumpLevel::Patch => Bump::Patch,
         BumpLevel::Minor => Bump::Minor,
         BumpLevel::Major => Bump::Major,
     };
-
-    let source_entry = config
-        .manifest
-        .iter()
-        .find(|m| m.path == config.version.current_source)
-        .ok_or_else(|| msg("current_source manifest entry not found"))?;
-    let content = std::fs::read_to_string(&source_entry.path)?;
-    let editor = cutver::manifest::editor_for(source_entry)?;
-    let current = editor.read_version(&content)?;
-    let next = bump(&current, bump_kind);
-
-    println!("Bump summary:");
-    println!("  source: {}", source_entry.path);
-    println!("  current version: {}", current);
-    println!("  next version: {}", next);
-    println!("  dry run: {}", dry_run);
-    println!("  manifests to touch:");
-    for m in &config.manifest {
-        let marker = if m.path == source_entry.path {
-            " (source)"
-        } else {
-            ""
-        };
-        println!("    - {}{}", m.path, marker);
+    match bump::run(config, kind, dry_run, skip_preflight) {
+        Ok(summary) => { print_summary(&summary); 0 }
+        Err(e) => { eprintln!("Error: {e}"); 1 }
     }
-    println!("  preflight commands:");
-    for (name, cmd) in &config.preflight {
-        let skipped = skip_preflight.contains(name);
-        println!(
-            "    - {}: {}{}",
-            name,
-            cmd,
-            if skipped { " [SKIPPED]" } else { "" }
-        );
-    }
-    Ok(())
 }
 
-fn msg(s: &str) -> Box<dyn std::error::Error> {
-    Box::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        s.to_string(),
-    ))
+fn run_doctor(config: &config::Config) -> i32 {
+    match bump::doctor(config) {
+        Ok(drifts) if drifts.is_empty() => {
+            println!("release.toml is valid.");
+            println!("  manifests: {}", config.manifest.len());
+            println!("  preflight steps: {}", config.preflight.len());
+            println!("  current source: {}", config.version.current_source);
+            0
+        }
+        Ok(drifts) => {
+            eprintln!("Drift detected ({} manifest(s) out of sync):", drifts.len());
+            for Drift { path, expected, actual } in drifts {
+                eprintln!("  - {path}: expected {expected}, found {actual}");
+            }
+            2
+        }
+        Err(e) => { eprintln!("Error: {e}"); 1 }
+    }
+}
+
+fn print_summary(summary: &Summary) {
+    println!("Bump summary:");
+    println!("  source: {}", summary.source);
+    println!("  current version: {}", summary.current);
+    println!("  next version: {}", summary.next);
+    println!("  dry run: {}", summary.dry_run);
+    println!("  preflight commands:");
+    for step in &summary.preflight {
+        let marker = if step.skipped { " [SKIPPED]" } else { "" };
+        println!("    - {}: {}{}", step.name, step.command, marker);
+    }
+    println!("  manifests:");
+    for t in &summary.touched {
+        println!("    - {}: {} -> {}", t.path, t.old, t.new);
+    }
+    if let Some(cl) = &summary.changelog {
+        println!("  changelog: {cl}");
+    }
+    println!("  commit: {}", summary.commit_message);
+    println!("  tag: {}", summary.tag);
 }
 
 #[cfg(test)]
@@ -99,11 +83,12 @@ mod tests {
 
     fn temp_dir(prefix: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("{}-{}", prefix, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    fn write_file(dir: &PathBuf, name: &str, text: &str) -> PathBuf {
+    fn write(dir: &PathBuf, name: &str, text: &str) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, text).unwrap();
         path
@@ -112,87 +97,73 @@ mod tests {
     #[test]
     fn doctor_reports_valid_config() {
         let dir = temp_dir("cutver-doc-ok");
-        write_file(
-            &dir,
-            "release.toml",
-            r#"
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(&dir, "release.toml", &format!(r#"
 [version]
-current_source = "package.json"
+current_source = "{}"
 [[manifest]]
-path = "package.json"
+path = "{}"
 kind = "json"
 field = "version"
-"#,
-        );
-        write_file(&dir, "package.json", r#"{"version": "1.0.0"}"#);
-        let args = Cli::try_parse_from([
-            "cutver",
-            "-c",
-            &dir.join("release.toml").to_string_lossy(),
-            "doctor",
-        ])
-        .unwrap();
-        assert!(run(args).is_ok());
+"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy()));
+        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+        assert_eq!(run(args), 0);
     }
 
     #[test]
     fn doctor_fails_for_invalid_config() {
         let dir = temp_dir("cutver-doc-bad");
-        write_file(
-            &dir,
-            "release.toml",
-            "[version]\ncurrent_source = \"missing\"",
-        );
-        let args = Cli::try_parse_from([
-            "cutver",
-            "-c",
-            &dir.join("release.toml").to_string_lossy(),
-            "doctor",
-        ])
-        .unwrap();
-        assert!(run(args).is_err());
+        write(&dir, "release.toml", "[version]\ncurrent_source = \"missing\"");
+        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+        assert_eq!(run(args), 1);
     }
 
     #[test]
-    fn bump_stub_reports_summary_without_mutating() {
-        let dir = temp_dir("cutver-bump-stub");
-        let pkg = dir.join("package.json");
-        let cargo = dir.join("Cargo.toml");
-        let cfg = format!(
-            r#"
+    fn doctor_reports_drift_exit_code() {
+        let dir = temp_dir("cutver-doc-drift-exit");
+        write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.0.0\"\n");
+        write(&dir, "release.toml", &format!(r#"
 [version]
-current_source = "{pkg}"
+current_source = "{}"
 [[manifest]]
-path = "{pkg}"
+path = "{}"
 kind = "json"
 field = "version"
 [[manifest]]
-path = "{cargo}"
+path = "{}"
 kind = "cargo-package"
+"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy(), dir.join("Cargo.toml").to_string_lossy()));
+        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+        assert_eq!(run(args), 2);
+    }
+
+    #[test]
+    fn bump_dry_run_does_not_mutate() {
+        let dir = temp_dir("cutver-bump-stub");
+        write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
+        write(&dir, "release.toml", &format!(r#"
+[version]
+current_source = "{}"
+[[manifest]]
+path = "{}"
+kind = "json"
+field = "version"
+[[manifest]]
+path = "{}"
+kind = "cargo-package"
+[git]
+require_clean_tree = false
 [preflight]
 tests = "cargo test"
-"#,
-            pkg = pkg.to_string_lossy(),
-            cargo = cargo.to_string_lossy(),
-        );
-        write_file(&dir, "release.toml", &cfg);
-        write_file(&dir, "package.json", r#"{"version": "1.2.3"}"#);
-        let cargo_before = r#"[package]
-version = "1.2.3"
-"#;
-        write_file(&dir, "Cargo.toml", cargo_before);
+"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy(), dir.join("Cargo.toml").to_string_lossy()));
+        let cargo_before = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         let args = Cli::try_parse_from([
-            "cutver",
-            "-c",
-            &dir.join("release.toml").to_string_lossy(),
-            "bump",
-            "minor",
-            "--dry-run",
-            "--skip-preflight",
-            "tests",
-        ])
-        .unwrap();
-        assert!(run(args).is_ok());
-        assert_eq!(fs::read_to_string(&cargo).unwrap(), cargo_before);
+            "cutver", "-c", &dir.join("release.toml").to_string_lossy(),
+            "bump", "minor", "--dry-run", "--skip-preflight", "tests",
+        ]).unwrap();
+        assert_eq!(run(args), 0);
+        assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), cargo_before);
     }
 }
