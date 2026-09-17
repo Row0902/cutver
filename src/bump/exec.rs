@@ -13,18 +13,14 @@ use std::io;
 use std::path::Path;
 
 pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[String]) -> Result<Summary, Error> {
-    let repo = ".";
+    // cutver runs from the project root where release.toml lives; the git
+    // repository root is therefore the directory containing release.toml.
+    let repo = &config.root_dir;
     git::require_clean_tree(repo, config.git.require_clean_tree)?;
     git::require_branch(repo, config.git.require_branch.as_deref())?;
 
-    let source_entry = config.manifest.iter()
-        .find(|m| m.path == config.version.current_source)
-        .ok_or_else(|| Error::Read { path: config.version.current_source.clone(), source: io::Error::new(io::ErrorKind::NotFound, "current_source manifest entry not found") })?;
-    let source_content = read(&source_entry.path)?;
-    let source_editor = manifest::editor_for(source_entry).map_err(|e| Error::CurrentSource { path: source_entry.path.clone(), source: e })?;
-    let current = source_editor.read_version(&source_content).map_err(|e| Error::CurrentSource { path: source_entry.path.clone(), source: e })?;
+    let (source_entry, _editor, current) = current_source(config)?;
     let next = semver_bump::bump(&current, bump_kind);
-
     let commit_message = git::commit_message(&config.git.commit_message, &next.to_string());
     let tag = git::tag_name(&config.git.tag_prefix, &next.to_string());
 
@@ -64,6 +60,19 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     let tag_skipped = tag_report.is_some() && !dry_run;
 
     Ok(Summary { source: source_entry.path.clone(), current, next, dry_run, preflight: preflight_plan, touched, changelog: config.changelog.path.clone(), commit_message, tag, tag_skipped })
+}
+
+/// Single source of truth for mapping `config.version.current_source` to its
+/// manifest entry, editor, and current version. Used by both `run` and `doctor`
+/// to eliminate the previously duplicated lookup and error-mapping blocks.
+fn current_source(config: &Config) -> Result<(&crate::config::Manifest, Box<dyn manifest::ManifestEditor>, Version), Error> {
+    let entry = config.manifest.iter()
+        .find(|m| m.path == config.version.current_source)
+        .ok_or_else(|| Error::Read { path: config.version.current_source.clone(), source: io::Error::new(io::ErrorKind::NotFound, "current_source manifest entry not found") })?;
+    let content = read(&entry.path)?;
+    let editor = manifest::editor_for(entry).map_err(|e| Error::CurrentSource { path: entry.path.clone(), source: e })?;
+    let version = editor.read_version(&content).map_err(|e| Error::CurrentSource { path: entry.path.clone(), source: e })?;
+    Ok((entry, editor, version))
 }
 
 fn compute(config: &Config, next: &Version) -> Result<Vec<Change>, Error> {
@@ -114,13 +123,7 @@ fn rollback(computed: &[Change], paths: &[String]) {
 }
 
 pub fn doctor(config: &Config) -> Result<Vec<Drift>, Error> {
-    let source_entry = config.manifest.iter()
-        .find(|m| m.path == config.version.current_source)
-        .ok_or_else(|| Error::Read { path: config.version.current_source.clone(), source: io::Error::new(io::ErrorKind::NotFound, "current_source manifest entry not found") })?;
-    let source_content = read(&source_entry.path)?;
-    let source_editor = manifest::editor_for(source_entry).map_err(|e| Error::CurrentSource { path: source_entry.path.clone(), source: e })?;
-    let expected = source_editor.read_version(&source_content).map_err(|e| Error::CurrentSource { path: source_entry.path.clone(), source: e })?;
-
+    let (source_entry, _editor, expected) = current_source(config)?;
     let mut drifts = Vec::new();
     for m in &config.manifest {
         if m.path == source_entry.path { continue; }

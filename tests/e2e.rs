@@ -125,6 +125,23 @@ fn bump_minor_happy_path() {
 }
 
 #[test]
+fn bump_and_doctor_from_subdirectory() {
+    if !git_available() { return; }
+    let guard = FixtureGuard::new("from-subdir");
+    write_fixture(&guard, "true");
+    let fixture = guard.fixture();
+    let sub = fixture.dir.join("src");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::env::set_current_dir(&sub).unwrap();
+    let cfg = cutver::config::discover(".").expect("discover from subdirectory");
+    bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert!(fixture.read("package.json").contains("\"version\": \"1.3.0\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.3.0\""));
+    let drifts = cutver::bump::doctor(&cfg).unwrap();
+    assert!(drifts.is_empty(), "doctor from subdirectory should report no drift");
+}
+
+#[test]
 fn bump_aborts_when_preflight_fails() {
     if !git_available() { return; }
     let guard = FixtureGuard::new("preflight-fail");

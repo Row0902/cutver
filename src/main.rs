@@ -3,7 +3,6 @@ use cutver::bump::{self, Drift, Summary};
 use cutver::cli::{BumpLevel, Cli, Commands};
 use cutver::config;
 use cutver::semver_bump::Bump;
-use std::path::PathBuf;
 use std::process;
 
 fn main() {
@@ -12,8 +11,17 @@ fn main() {
 }
 
 fn run(args: Cli) -> i32 {
-    let config_path = args.config.unwrap_or_else(|| PathBuf::from("release.toml"));
-    match config::load(&config_path) {
+    let config = match args.config {
+        Some(path) => config::load(path),
+        None => {
+            let start_dir = match std::env::current_dir() {
+                Ok(d) => d,
+                Err(e) => { eprintln!("Error: unable to determine current directory: {e}"); return 1; }
+            };
+            config::discover(start_dir)
+        }
+    };
+    match config {
         Ok(config) => match args.command {
             Commands::Doctor => run_doctor(&config),
             Commands::Bump { level, dry_run, skip_preflight } => run_bump(&config, level, dry_run, &skip_preflight),
@@ -80,6 +88,7 @@ fn print_summary(summary: &Summary) {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
 
     fn temp_dir(prefix: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("{}-{}", prefix, std::process::id()));
@@ -165,5 +174,20 @@ tests = "cargo test"
         ]).unwrap();
         assert_eq!(run(args), 0);
         assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), cargo_before);
+    }
+
+    #[test]
+    fn config_defaults_and_preflight_order() {
+        let dir = temp_dir("cutver-config-defaults");
+        let a = dir.join("a").to_string_lossy().to_string();
+        write(&dir, "release.toml", &format!(
+            "[version]\ncurrent_source = \"{a}\"\n[[manifest]]\npath = \"{a}\"\nkind = \"cargo-package\"\n[preflight]\ntests = \"cargo test\"\nz = \"z\"\na = \"a\"\nm = \"m\"\n[changelog]\npath = \"CHANGELOG.md\"\n"
+        ));
+        let cfg = config::load(dir.join("release.toml")).unwrap();
+        assert_eq!(cfg.version.current_source, a);
+        assert_eq!((cfg.manifest.len(), cfg.preflight.len(), cfg.git.tag_prefix.as_str()), (1, 4, "v"));
+        assert_eq!((cfg.changelog.format.as_str(), cfg.changelog.entry_template.as_str(), cfg.git.commit_message.as_str()), ("keep-a-changelog", "Maintenance and updates.", "chore(release): v{version}"));
+        assert!(cfg.git.require_clean_tree && cfg.git.require_branch.is_none());
+        assert_eq!(cfg.preflight.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["tests", "z", "a", "m"]);
     }
 }
