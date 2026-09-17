@@ -27,4 +27,4 @@ Design decisions:
 
 | Task | Commit | Checks |
 | --- | --- | --- |
-| M1-M3 | (pending) | cargo test: 85 passed; smoke: sleep 30 con timeout=2 aborta a los 2.0s, exit 1, cero mutación |
+| M1-M3 | 5211f56 | cargo test: 85 passed; smoke: sleep 30 con timeout=2 aborta a los 2.0s, exit 1, cero mutación |
