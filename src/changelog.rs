@@ -1,0 +1,200 @@
+use std::fs;
+use std::io;
+use std::path::Path;
+use std::time::SystemTime;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("failed to read changelog '{path}': {source}")]
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to write changelog '{path}': {source}")]
+    Write {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// Prepend a new keep-a-changelog section for `version` to `path`.
+///
+/// `version` is the final display string (e.g. `v1.2.3`) and already includes
+/// any configured tag prefix. `template` is the section body; if empty a single
+/// `- Unreleased` bullet is used.
+pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(), Error> {
+    let path = path.as_ref();
+    let path_str = path.display().to_string();
+    let content = fs::read_to_string(path)
+        .map_err(|e| Error::Read { path: path_str.clone(), source: e })?;
+
+    let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
+    if content.lines().any(|line| line == heading) {
+        return Ok(());
+    }
+
+    let section = if template.is_empty() {
+        format!("{}\n\n- Unreleased\n", heading)
+    } else {
+        format!("{}\n\n{}\n", heading, template)
+    };
+
+    let updated = insert_section(&content, &section);
+    fs::write(path, updated).map_err(|e| Error::Write { path: path_str, source: e })
+}
+
+fn insert_section(content: &str, section: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let idx = find_insertion_index(&lines);
+
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i == idx {
+            out.push_str(section);
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if idx == lines.len() {
+        out.push_str(section);
+    }
+    out
+}
+
+fn find_insertion_index(lines: &[&str]) -> usize {
+    if let Some(pos) = lines.iter().position(|line| line.starts_with("## [")) {
+        return pos;
+    }
+
+    if let Some(pos) = lines.iter().position(|line| line.starts_with("# Changelog")) {
+        let mut i = pos + 1;
+        while i < lines.len() && lines[i].trim_start().starts_with("<!--") {
+            i += 1;
+        }
+        return i;
+    }
+
+    if !lines.is_empty() && lines[0].starts_with("# ") {
+        return 1;
+    }
+
+    0
+}
+
+/// Format a `SystemTime` as `YYYY-MM-DD` in the local-time approximation used
+/// by cutver (days since the Unix epoch converted to a civil Gregorian date).
+pub fn format_date(t: SystemTime) -> String {
+    let days = days_since_epoch(t);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn days_since_epoch(t: SystemTime) -> i64 {
+    match t.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() / 86400) as i64,
+        Err(e) => {
+            let s = e.duration().as_secs() as i64;
+            -((s + 86399) / 86400)
+        }
+    }
+}
+
+/// Convert days since 1970-01-01 to a proleptic Gregorian `(year, month, day)`.
+/// Algorithm by Howard Hinnant, adapted to Rust integer arithmetic.
+fn civil_from_days(z: i64) -> (i32, u8, u8) {
+    let z = z + 719_468;
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64 + era * 400) as i32;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (y + if m <= 2 { 1 } else { 0 }, m as u8, d as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn date_helper_known_values() {
+        let epoch = SystemTime::UNIX_EPOCH;
+        assert_eq!(format_date(epoch), "1970-01-01");
+        assert_eq!(format_date(epoch + Duration::from_secs(86_400)), "1970-01-02");
+        assert_eq!(format_date(epoch - Duration::from_secs(1)), "1969-12-31");
+        assert_eq!(
+            format_date(epoch + Duration::from_secs(18_993 * 86_400)),
+            "2022-01-01"
+        );
+    }
+
+    fn update_file(path: &Path, content: &str, version: &str, template: &str) -> String {
+        fs::write(path, content).unwrap();
+        update(path, version, template).unwrap();
+        fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn insert_into_file_with_existing_entries() {
+        let path = std::env::temp_dir().join("cutver-cl-existing.md");
+        let base = "# Changelog\n\n## [1.0.0] - 2022-01-01\n\n- First release\n";
+        let out = update_file(&path, base, "v1.1.0", "Maintenance and updates.");
+        let today = format_date(SystemTime::now());
+
+        assert!(out.contains(&format!("## [v1.1.0] - {today}")));
+        let new_pos = out.lines().position(|l| l.starts_with("## [v1.1.0]")).unwrap();
+        let old_pos = out.lines().position(|l| l.starts_with("## [1.0.0]")).unwrap();
+        assert!(new_pos < old_pos);
+    }
+
+    #[test]
+    fn insert_into_file_with_only_header() {
+        let path = std::env::temp_dir().join("cutver-cl-header.md");
+        let base = "# Changelog\n\nAll notable changes to this project.\n";
+        let out = update_file(&path, base, "v1.0.0", "Maintenance and updates.");
+        let today = format_date(SystemTime::now());
+
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "# Changelog");
+        assert_eq!(lines[1], format!("## [v1.0.0] - {today}"));
+    }
+
+    #[test]
+    fn insert_into_empty_file() {
+        let path = std::env::temp_dir().join("cutver-cl-empty.md");
+        let out = update_file(&path, "", "v0.1.0", "Initial release.");
+        let today = format_date(SystemTime::now());
+
+        assert!(out.starts_with(&format!("## [v0.1.0] - {today}")));
+    }
+
+    #[test]
+    fn empty_template_uses_unreleased_bullet() {
+        let path = std::env::temp_dir().join("cutver-cl-template-empty.md");
+        let out = update_file(&path, "# Changelog\n", "v1.0.0", "");
+
+        assert!(out.contains("## [v1.0.0]"));
+        assert!(out.contains("- Unreleased"));
+    }
+
+    #[test]
+    fn idempotent_content_of_new_section() {
+        let path = std::env::temp_dir().join("cutver-cl-idempotent.md");
+        let base = "# Changelog\n\n## [1.0.0] - 2022-01-01\n\n- First\n";
+        update_file(&path, base, "v1.1.0", "Maintenance and updates.");
+        let first = fs::read_to_string(&path).unwrap();
+        update(&path, "v1.1.0", "Maintenance and updates.").unwrap();
+        let second = fs::read_to_string(&path).unwrap();
+        assert_eq!(first, second);
+    }
+}
