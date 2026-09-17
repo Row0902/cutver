@@ -69,9 +69,13 @@ version_name_field = "versionName"
 version_code_field = "versionCode"   # integer, incremented on every bump
 
 [preflight]
+# Optional global default in seconds; applies to any step without its own timeout.
+default_timeout = 600
 tests      = "bun run test --watch=false"
 build      = "bun run build"
 rust_check = "cargo check --workspace"
+# Per-step timeout overrides the default.
+watch_tests = { command = "bun run test --watch=true", timeout = 900 }
 
 [changelog]
 path = "CHANGELOG.md"

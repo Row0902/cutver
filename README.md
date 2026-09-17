@@ -24,6 +24,18 @@ cutver bump minor --dry-run
 cutver doctor       # check manifest version consistency
 ```
 
+Preflight steps run with an optional per-step or global `timeout` (seconds)
+in `release.toml`. A step that exceeds its limit is killed and the release
+aborts before any mutation. Plain `name = "command"` strings remain fully
+backwards compatible.
+
+```toml
+[preflight]
+default_timeout = 600
+tests = { command = "bun run test", timeout = 300 }
+build = "bun run build"
+```
+
 ## Installation
 
 ```bash
