@@ -14,19 +14,17 @@ making `cutver` usable by any person on any project with any language.
 
 ## Status
 
-Design phase. See [`docs/design.md`](docs/design.md) for the full
-architecture, module layout, and configuration format.
-
-## Planned usage
+cutver v0.1 is implemented. Configure your project with `release.toml` and run:
 
 ```bash
 cutver bump patch   # 1.2.3 -> 1.2.4
 cutver bump minor   # 1.2.3 -> 1.3.0
 cutver bump major   # 1.2.3 -> 2.0.0
 cutver bump minor --dry-run
+cutver doctor       # check manifest version consistency
 ```
 
-## Planned installation
+## Installation
 
 ```bash
 cargo install cutver
