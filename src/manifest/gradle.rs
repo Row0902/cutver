@@ -19,10 +19,7 @@ impl GradleEditor {
 
 impl ManifestEditor for GradleEditor {
     fn read_version(&self, content: &str) -> Result<Version, Error> {
-        let re = Regex::new(&format!(
-            r#"{}\s+"([^"]+)""#,
-            regex::escape(&self.version_name_field)
-        ))?;
+        let re = Regex::new(&format!(r#"{}\s+"([^"]+)""#, regex::escape(&self.version_name_field)))?;
         let cap = re
             .captures(content)
             .ok_or_else(|| Error::TargetNotFound(self.version_name_field.clone()))?;
@@ -34,22 +31,13 @@ impl ManifestEditor for GradleEditor {
     }
 
     fn write_version(&self, content: &str, version: &Version) -> Result<String, Error> {
-        let name_re = Regex::new(&format!(
-            r#"{}\s+"[^"]+""#,
-            regex::escape(&self.version_name_field)
-        ))?;
+        let name_re = Regex::new(&format!(r#"{}\s+"[^"]+""#, regex::escape(&self.version_name_field)))?;
         if !name_re.is_match(content) {
             return Err(Error::TargetNotFound(self.version_name_field.clone()));
         }
-        let out = name_re.replace_all(
-            content,
-            format!(r#"{} "{}""#, self.version_name_field, version),
-        );
+        let out = name_re.replace_all(content, format!(r#"{} "{}""#, self.version_name_field, version));
 
-        let code_re = Regex::new(&format!(
-            r"{}\s+(\d+)",
-            regex::escape(&self.version_code_field)
-        ))?;
+        let code_re = Regex::new(&format!(r"{}\s+(\d+)", regex::escape(&self.version_code_field)))?;
         let cap = code_re
             .captures(&out)
             .ok_or_else(|| Error::TargetNotFound(self.version_code_field.clone()))?;
@@ -60,13 +48,9 @@ impl ManifestEditor for GradleEditor {
             .parse()
             .map_err(|e| Error::Parse {
                 kind: "gradle",
-                detail: format!(
-                    "{} is not a valid integer: {e}",
-                    self.version_code_field
-                ),
+                detail: format!("{} is not a valid integer: {e}", self.version_code_field),
             })?;
-        let result =
-            code_re.replace_all(&out, format!(r#"{} {}"#, self.version_code_field, code + 1));
+        let result = code_re.replace_all(&out, format!(r#"{} {}"#, self.version_code_field, code + 1));
 
         Ok(result.into_owned())
     }
@@ -109,8 +93,7 @@ android {
     #[test]
     fn fails_when_version_name_missing() {
         assert!(matches!(
-            GradleEditor::new("versionName".into(), "versionCode".into())
-                .read_version("android {}"),
+            GradleEditor::new("versionName".into(), "versionCode".into()).read_version("android {}"),
             Err(Error::TargetNotFound(_))
         ));
     }

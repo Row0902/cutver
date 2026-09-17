@@ -8,9 +8,17 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to read changelog '{path}': {source}")]
-    Read { path: String, #[source] source: io::Error },
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
     #[error("failed to write changelog '{path}': {source}")]
-    Write { path: String, #[source] source: atomic::Error },
+    Write {
+        path: String,
+        #[source]
+        source: atomic::Error,
+    },
 }
 
 /// Prepend a new keep-a-changelog section for `version` to `path`.
@@ -21,8 +29,10 @@ pub enum Error {
 pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(), Error> {
     let path = path.as_ref();
     let path_str = path.display().to_string();
-    let content = fs::read_to_string(path)
-        .map_err(|e| Error::Read { path: path_str.clone(), source: e })?;
+    let content = fs::read_to_string(path).map_err(|e| Error::Read {
+        path: path_str.clone(),
+        source: e,
+    })?;
 
     let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
     if content.lines().any(|line| line == heading) {
@@ -36,7 +46,10 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
     };
 
     let updated = insert_section(&content, &section);
-    atomic::write_atomic(path, updated).map_err(|e| Error::Write { path: path_str, source: e })
+    atomic::write_atomic(path, updated).map_err(|e| Error::Write {
+        path: path_str,
+        source: e,
+    })
 }
 
 fn insert_section(content: &str, section: &str) -> String {
@@ -99,11 +112,7 @@ fn days_since_epoch(t: SystemTime) -> i64 {
 /// Algorithm by Howard Hinnant, adapted to Rust integer arithmetic.
 fn civil_from_days(z: i64) -> (i32, u8, u8) {
     let z = z + 719_468;
-    let era = if z >= 0 {
-        z / 146_097
-    } else {
-        (z - 146_096) / 146_097
-    };
+    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
     let doe = (z - era * 146_097) as u64;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = (yoe as i64 + era * 400) as i32;
@@ -125,10 +134,7 @@ mod tests {
         assert_eq!(format_date(epoch), "1970-01-01");
         assert_eq!(format_date(epoch + Duration::from_secs(86_400)), "1970-01-02");
         assert_eq!(format_date(epoch - Duration::from_secs(1)), "1969-12-31");
-        assert_eq!(
-            format_date(epoch + Duration::from_secs(18_993 * 86_400)),
-            "2022-01-01"
-        );
+        assert_eq!(format_date(epoch + Duration::from_secs(18_993 * 86_400)), "2022-01-01");
     }
 
     fn update_file(path: &Path, content: &str, version: &str, template: &str) -> String {

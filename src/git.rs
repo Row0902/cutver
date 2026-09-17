@@ -20,21 +20,31 @@ fn run_git(repo: impl AsRef<Path>, args: &[&str]) -> Result<Output, Error> {
         .current_dir(repo)
         .args(args)
         .output()
-        .map_err(|e| Error::Command { command: args.join(" "), source: e })
+        .map_err(|e| Error::Command {
+            command: args.join(" "),
+            source: e,
+        })
 }
 
 fn stdout_text(output: Output, command: &str) -> Result<String, Error> {
     if !output.status.success() {
-        return Err(Error::Status { command: command.into(), status: output.status });
+        return Err(Error::Status {
+            command: command.into(),
+            status: output.status,
+        });
     }
-    String::from_utf8(output.stdout)
-        .map_err(|e| Error::Output { source: io::Error::new(io::ErrorKind::InvalidData, e) })
+    String::from_utf8(output.stdout).map_err(|e| Error::Output {
+        source: io::Error::new(io::ErrorKind::InvalidData, e),
+    })
 }
 
 pub fn tag_exists(repo: impl AsRef<Path>, tag_name: &str) -> Result<bool, Error> {
     let output = run_git(&repo, &["tag", "-l", tag_name])?;
     if !output.status.success() {
-        return Err(Error::Status { command: format!("tag -l {tag_name}"), status: output.status });
+        return Err(Error::Status {
+            command: format!("tag -l {tag_name}"),
+            status: output.status,
+        });
     }
     Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
@@ -60,16 +70,23 @@ pub fn require_clean_tree(repo: impl AsRef<Path>, require: bool) -> Result<(), E
     if is_clean(&text) {
         Ok(())
     } else {
-        Err(Error::Guard { detail: format!("working tree has uncommitted changes:\n{text}") })
+        Err(Error::Guard {
+            detail: format!("working tree has uncommitted changes:\n{text}"),
+        })
     }
 }
 
 pub fn require_branch(repo: impl AsRef<Path>, expected: Option<&str>) -> Result<(), Error> {
     if let Some(branch) = expected {
-        let current = stdout_text(run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?, "symbolic-ref --short HEAD")?;
+        let current = stdout_text(
+            run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?,
+            "symbolic-ref --short HEAD",
+        )?;
         let current = parse_branch(&current);
         if current != branch {
-            return Err(Error::Guard { detail: format!("on branch '{current}', expected '{branch}'") });
+            return Err(Error::Guard {
+                detail: format!("on branch '{current}', expected '{branch}'"),
+            });
         }
     }
     Ok(())
@@ -84,18 +101,44 @@ pub fn stage(repo: impl AsRef<Path>, paths: &[String], dry_run: bool) -> Result<
     if dry_run {
         return Ok(Some(format!("git add {}", paths.join(" "))));
     }
-    let status = Command::new("git").current_dir(&repo).args(&args).status()
-        .map_err(|e| Error::Command { command: args.join(" "), source: e })?;
-    if status.success() { Ok(None) } else { Err(Error::Status { command: args.join(" "), status }) }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(&args)
+        .status()
+        .map_err(|e| Error::Command {
+            command: args.join(" "),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: args.join(" "),
+            status,
+        })
+    }
 }
 
 pub fn commit(repo: impl AsRef<Path>, message: &str, dry_run: bool) -> Result<Option<String>, Error> {
     if dry_run {
         return Ok(Some(format!(r#"git commit -m "{}""#, message)));
     }
-    let status = Command::new("git").current_dir(&repo).args(["commit", "-m", message]).status()
-        .map_err(|e| Error::Command { command: "commit".into(), source: e })?;
-    if status.success() { Ok(None) } else { Err(Error::Status { command: "commit".into(), status }) }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(["commit", "-m", message])
+        .status()
+        .map_err(|e| Error::Command {
+            command: "commit".into(),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: "commit".into(),
+            status,
+        })
+    }
 }
 
 pub fn tag(repo: impl AsRef<Path>, tag_name: &str, version: &str, dry_run: bool) -> Result<Option<String>, Error> {
@@ -109,11 +152,26 @@ pub fn tag(repo: impl AsRef<Path>, tag_name: &str, version: &str, dry_run: bool)
         if tag_commit == head {
             return Ok(Some(format!("skipped (already points at HEAD): {tag_name}")));
         }
-        return Err(Error::Guard { detail: format!("tag '{tag_name}' already exists at {tag_commit}, not HEAD ({head})") });
+        return Err(Error::Guard {
+            detail: format!("tag '{tag_name}' already exists at {tag_commit}, not HEAD ({head})"),
+        });
     }
-    let status = Command::new("git").current_dir(&repo).args(["tag", "-a", tag_name, "-m", &msg]).status()
-        .map_err(|e| Error::Command { command: "tag".into(), source: e })?;
-    if status.success() { Ok(None) } else { Err(Error::Status { command: "tag".into(), status }) }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(["tag", "-a", tag_name, "-m", &msg])
+        .status()
+        .map_err(|e| Error::Command {
+            command: "tag".into(),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: "tag".into(),
+            status,
+        })
+    }
 }
 
 pub fn commit_message(template: &str, version: &str) -> String {
@@ -133,8 +191,21 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cutver-git-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        for a in [&["init", "-q"] as &[&str], &["config", "user.email", "t@e.com"], &["config", "user.name", "T"], &["config", "commit.gpgsign", "false"], &["config", "tag.gpgsign", "false"]] {
-            assert!(Command::new("git").current_dir(&dir).args(a).status().unwrap().success());
+        for a in [
+            &["init", "-q"] as &[&str],
+            &["config", "user.email", "t@e.com"],
+            &["config", "user.name", "T"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .current_dir(&dir)
+                    .args(a)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
         }
         fs::write(dir.join("x"), "a").unwrap();
         git(&dir, &["add", "x"]);
@@ -143,12 +214,22 @@ mod tests {
     }
 
     fn git(repo: &std::path::PathBuf, args: &[&str]) {
-        assert!(Command::new("git").current_dir(repo).args(args).status().unwrap().success());
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     #[test]
     fn commit_message_and_tag_name_build() {
-        assert_eq!(commit_message("chore(release): v{version}", "1.2.3"), "chore(release): v1.2.3");
+        assert_eq!(
+            commit_message("chore(release): v{version}", "1.2.3"),
+            "chore(release): v1.2.3"
+        );
         assert_eq!(tag_name("v", "1.2.3"), "v1.2.3");
         assert_eq!(tag_name("", "1.2.3"), "1.2.3");
     }
@@ -172,8 +253,14 @@ mod tests {
 
     #[test]
     fn commit_and_tag_dry_run_report_commands() {
-        assert_eq!(commit(".", "chore: v1.0.0", true).unwrap().unwrap(), r#"git commit -m "chore: v1.0.0""#);
-        assert_eq!(tag(".", "v1.0.0", "1.0.0", true).unwrap().unwrap(), r#"git tag -a v1.0.0 -m "Release 1.0.0""#);
+        assert_eq!(
+            commit(".", "chore: v1.0.0", true).unwrap().unwrap(),
+            r#"git commit -m "chore: v1.0.0""#
+        );
+        assert_eq!(
+            tag(".", "v1.0.0", "1.0.0", true).unwrap().unwrap(),
+            r#"git tag -a v1.0.0 -m "Release 1.0.0""#
+        );
     }
 
     #[test]
@@ -182,7 +269,10 @@ mod tests {
         let dir = tmp_repo();
         git(&dir, &["tag", "v1"]);
         assert!(tag_exists(&dir, "v1").unwrap() && !tag_exists(&dir, "v2").unwrap());
-        assert_eq!(tag(&dir, "v1", "1", false).unwrap(), Some("skipped (already points at HEAD): v1".into()));
+        assert_eq!(
+            tag(&dir, "v1", "1", false).unwrap(),
+            Some("skipped (already points at HEAD): v1".into())
+        );
     }
 
     #[test]

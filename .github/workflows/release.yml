@@ -1,0 +1,87 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OUT="cutver-${VERSION}-${{ matrix.target }}"
+          mkdir "$OUT"
+          cp target/${{ matrix.target }}/release/cutver "$OUT/"
+          tar -czf "${OUT}.tar.gz" "$OUT"
+          mkdir -p dist
+          mv "${OUT}.tar.gz" dist/
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $out = "cutver-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $out | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/cutver.exe" "$out/"
+          Compress-Archive -Path $out -DestinationPath "$out.zip"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Move-Item "$out.zip" dist/
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: asset-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    name: Upload release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload binaries
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true

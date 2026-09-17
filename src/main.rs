@@ -7,7 +7,9 @@ use std::process;
 
 fn main() {
     let code = run(Cli::parse());
-    if code != 0 { process::exit(code); }
+    if code != 0 {
+        process::exit(code);
+    }
 }
 
 fn run(args: Cli) -> i32 {
@@ -16,7 +18,10 @@ fn run(args: Cli) -> i32 {
         None => {
             let start_dir = match std::env::current_dir() {
                 Ok(d) => d,
-                Err(e) => { eprintln!("Error: unable to determine current directory: {e}"); return 1; }
+                Err(e) => {
+                    eprintln!("Error: unable to determine current directory: {e}");
+                    return 1;
+                }
             };
             config::discover(start_dir)
         }
@@ -24,9 +29,16 @@ fn run(args: Cli) -> i32 {
     match config {
         Ok(config) => match args.command {
             Commands::Doctor => run_doctor(&config),
-            Commands::Bump { level, dry_run, skip_preflight } => run_bump(&config, level, dry_run, &skip_preflight),
+            Commands::Bump {
+                level,
+                dry_run,
+                skip_preflight,
+            } => run_bump(&config, level, dry_run, &skip_preflight),
         },
-        Err(e) => { eprintln!("Error loading config: {e}"); 1 }
+        Err(e) => {
+            eprintln!("Error loading config: {e}");
+            1
+        }
     }
 }
 
@@ -37,8 +49,14 @@ fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_prefl
         BumpLevel::Major => Bump::Major,
     };
     match bump::run(config, kind, dry_run, skip_preflight) {
-        Ok(summary) => { print_summary(&summary); 0 }
-        Err(e) => { eprintln!("Error: {e}"); 1 }
+        Ok(summary) => {
+            print_summary(&summary);
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
     }
 }
 
@@ -58,7 +76,10 @@ fn run_doctor(config: &config::Config) -> i32 {
             }
             2
         }
-        Err(e) => { eprintln!("Error: {e}"); 1 }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
     }
 }
 
@@ -88,6 +109,7 @@ fn print_summary(summary: &Summary) {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -97,7 +119,7 @@ mod tests {
         dir
     }
 
-    fn write(dir: &PathBuf, name: &str, text: &str) -> PathBuf {
+    fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, text).unwrap();
         path
@@ -107,15 +129,24 @@ mod tests {
     fn doctor_reports_valid_config() {
         let dir = temp_dir("cutver-doc-ok");
         write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
-        write(&dir, "release.toml", &format!(r#"
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                r#"
 [version]
 current_source = "{}"
 [[manifest]]
 path = "{}"
 kind = "json"
 field = "version"
-"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy()));
-        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+"#,
+                dir.join("package.json").to_string_lossy(),
+                dir.join("package.json").to_string_lossy()
+            ),
+        );
+        let args =
+            Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
         assert_eq!(run(args), 0);
     }
 
@@ -123,7 +154,8 @@ field = "version"
     fn doctor_fails_for_invalid_config() {
         let dir = temp_dir("cutver-doc-bad");
         write(&dir, "release.toml", "[version]\ncurrent_source = \"missing\"");
-        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+        let args =
+            Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
         assert_eq!(run(args), 1);
     }
 
@@ -132,7 +164,11 @@ field = "version"
         let dir = temp_dir("cutver-doc-drift-exit");
         write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.0.0\"\n");
-        write(&dir, "release.toml", &format!(r#"
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                r#"
 [version]
 current_source = "{}"
 [[manifest]]
@@ -142,8 +178,14 @@ field = "version"
 [[manifest]]
 path = "{}"
 kind = "cargo-package"
-"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy(), dir.join("Cargo.toml").to_string_lossy()));
-        let args = Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
+"#,
+                dir.join("package.json").to_string_lossy(),
+                dir.join("package.json").to_string_lossy(),
+                dir.join("Cargo.toml").to_string_lossy()
+            ),
+        );
+        let args =
+            Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
         assert_eq!(run(args), 2);
     }
 
@@ -152,7 +194,11 @@ kind = "cargo-package"
         let dir = temp_dir("cutver-bump-stub");
         write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
-        write(&dir, "release.toml", &format!(r#"
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                r#"
 [version]
 current_source = "{}"
 [[manifest]]
@@ -166,12 +212,24 @@ kind = "cargo-package"
 require_clean_tree = false
 [preflight]
 tests = "cargo test"
-"#, dir.join("package.json").to_string_lossy(), dir.join("package.json").to_string_lossy(), dir.join("Cargo.toml").to_string_lossy()));
+"#,
+                dir.join("package.json").to_string_lossy(),
+                dir.join("package.json").to_string_lossy(),
+                dir.join("Cargo.toml").to_string_lossy()
+            ),
+        );
         let cargo_before = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         let args = Cli::try_parse_from([
-            "cutver", "-c", &dir.join("release.toml").to_string_lossy(),
-            "bump", "minor", "--dry-run", "--skip-preflight", "tests",
-        ]).unwrap();
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "bump",
+            "minor",
+            "--dry-run",
+            "--skip-preflight",
+            "tests",
+        ])
+        .unwrap();
         assert_eq!(run(args), 0);
         assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), cargo_before);
     }
@@ -180,14 +238,35 @@ tests = "cargo test"
     fn config_defaults_and_preflight_order() {
         let dir = temp_dir("cutver-config-defaults");
         let a = dir.join("a").to_string_lossy().to_string();
-        write(&dir, "release.toml", &format!(
-            "[version]\ncurrent_source = \"{a}\"\n[[manifest]]\npath = \"{a}\"\nkind = \"cargo-package\"\n[preflight]\ntests = \"cargo test\"\nz = \"z\"\na = \"a\"\nm = \"m\"\n[changelog]\npath = \"CHANGELOG.md\"\n"
-        ));
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                "[version]\ncurrent_source = \"{a}\"\n[[manifest]]\npath = \"{a}\"\nkind = \"cargo-package\"\n[preflight]\ntests = \"cargo test\"\nz = \"z\"\na = \"a\"\nm = \"m\"\n[changelog]\npath = \"CHANGELOG.md\"\n"
+            ),
+        );
         let cfg = config::load(dir.join("release.toml")).unwrap();
         assert_eq!(cfg.version.current_source, a);
-        assert_eq!((cfg.manifest.len(), cfg.preflight.len(), cfg.git.tag_prefix.as_str()), (1, 4, "v"));
-        assert_eq!((cfg.changelog.format.as_str(), cfg.changelog.entry_template.as_str(), cfg.git.commit_message.as_str()), ("keep-a-changelog", "Maintenance and updates.", "chore(release): v{version}"));
+        assert_eq!(
+            (cfg.manifest.len(), cfg.preflight.len(), cfg.git.tag_prefix.as_str()),
+            (1, 4, "v")
+        );
+        assert_eq!(
+            (
+                cfg.changelog.format.as_str(),
+                cfg.changelog.entry_template.as_str(),
+                cfg.git.commit_message.as_str()
+            ),
+            (
+                "keep-a-changelog",
+                "Maintenance and updates.",
+                "chore(release): v{version}"
+            )
+        );
         assert!(cfg.git.require_clean_tree && cfg.git.require_branch.is_none());
-        assert_eq!(cfg.preflight.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["tests", "z", "a", "m"]);
+        assert_eq!(
+            cfg.preflight.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["tests", "z", "a", "m"]
+        );
     }
 }

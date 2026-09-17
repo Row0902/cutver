@@ -1,4 +1,4 @@
-use super::{json_scan, Error, ManifestEditor};
+use super::{Error, ManifestEditor, json_scan};
 use semver::Version;
 use serde_json::Value;
 
@@ -27,11 +27,8 @@ impl ManifestEditor for JsonEditor {
             kind: "json",
             detail: e.to_string(),
         })?;
-        let target = navigate(&value, &self.field)
-            .ok_or_else(|| Error::FieldNotFound(self.field.clone()))?;
-        let s = target
-            .as_str()
-            .ok_or_else(|| Error::NotAString(self.field.clone()))?;
+        let target = navigate(&value, &self.field).ok_or_else(|| Error::FieldNotFound(self.field.clone()))?;
+        let s = target.as_str().ok_or_else(|| Error::NotAString(self.field.clone()))?;
         Version::parse(s).map_err(|e| Error::InvalidVersion(s.into(), e))
     }
 
@@ -147,8 +144,7 @@ mod tests {
     #[test]
     fn write_fails_when_field_missing() {
         assert!(matches!(
-            JsonEditor::new("missing".into())
-                .write_version(SIMPLE, &Version::parse("1.0.0").unwrap()),
+            JsonEditor::new("missing".into()).write_version(SIMPLE, &Version::parse("1.0.0").unwrap()),
             Err(Error::FieldNotFound(_))
         ));
     }
@@ -156,8 +152,7 @@ mod tests {
     #[test]
     fn write_fails_when_version_not_a_string() {
         assert!(matches!(
-            JsonEditor::new("version".into())
-                .write_version(r#"{"version": 123}"#, &Version::parse("1.0.0").unwrap()),
+            JsonEditor::new("version".into()).write_version(r#"{"version": 123}"#, &Version::parse("1.0.0").unwrap()),
             Err(Error::NotAString(_))
         ));
     }

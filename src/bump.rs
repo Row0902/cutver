@@ -14,9 +14,15 @@ pub enum Error {
     #[error("failed to read '{path}': {source}")]
     Read { path: String, source: io::Error },
     #[error("current source '{path}': {source}")]
-    CurrentSource { path: String, source: crate::manifest::Error },
+    CurrentSource {
+        path: String,
+        source: crate::manifest::Error,
+    },
     #[error("manifest '{path}': {source}")]
-    Manifest { path: String, source: crate::manifest::Error },
+    Manifest {
+        path: String,
+        source: crate::manifest::Error,
+    },
     #[error("preflight failed: {0}")]
     Preflight(#[from] preflight::Error),
     #[error("changelog failed: {0}")]
@@ -26,15 +32,28 @@ pub enum Error {
     #[error("commit failed: {0}")]
     Commit(#[source] crate::git::Error),
     #[error("tag '{tag}' failed: {source}")]
-    Tag { tag: String, #[source] source: crate::git::Error },
+    Tag {
+        tag: String,
+        #[source]
+        source: crate::git::Error,
+    },
     #[error("release tag {tag} already exists (points at {commit}) — resolve it before re-running")]
     TagExists { tag: String, commit: String },
     #[error("write failed for '{path}'; rollback attempted. {rollback}")]
-    WriteRollback { path: String, #[source] source: crate::atomic::Error, rollback: String },
+    WriteRollback {
+        path: String,
+        #[source]
+        source: crate::atomic::Error,
+        rollback: String,
+    },
 }
 
 #[derive(Debug)]
-pub struct Touched { pub path: String, pub old: String, pub new: String }
+pub struct Touched {
+    pub path: String,
+    pub old: String,
+    pub new: String,
+}
 
 #[derive(Debug)]
 pub struct Summary {
@@ -51,7 +70,11 @@ pub struct Summary {
 }
 
 #[derive(Debug)]
-pub struct Drift { pub path: String, pub expected: String, pub actual: String }
+pub struct Drift {
+    pub path: String,
+    pub expected: String,
+    pub actual: String,
+}
 
 #[derive(Debug)]
 pub(crate) struct Change {
@@ -76,16 +99,20 @@ mod tests {
         dir
     }
 
-    fn write(dir: &std::path::PathBuf, name: &str, text: &str) {
+    fn write(dir: &std::path::Path, name: &str, text: &str) {
         fs::write(dir.join(name), text).unwrap();
     }
 
-    fn load(dir: &std::path::PathBuf, source: &str, extra: &str) -> config::Config {
+    fn load(dir: &std::path::Path, source: &str, extra: &str) -> config::Config {
         let pkg = dir.join(source).to_string_lossy().to_string();
         let cargo = dir.join("Cargo.toml").to_string_lossy().to_string();
-        write(dir, "release.toml", &format!(
-            "[version]\ncurrent_source = \"{pkg}\"\n\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n\n[[manifest]]\npath = \"{cargo}\"\nkind = \"cargo-package\"\n\n{extra}"
-        ));
+        write(
+            dir,
+            "release.toml",
+            &format!(
+                "[version]\ncurrent_source = \"{pkg}\"\n\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n\n[[manifest]]\npath = \"{cargo}\"\nkind = \"cargo-package\"\n\n{extra}"
+            ),
+        );
         config::load(dir.join("release.toml")).unwrap()
     }
 
@@ -115,10 +142,19 @@ mod tests {
         let dir = tmp("cutver-bump-dry");
         write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
-        let summary = run(&load(&dir, "package.json", "[git]\nrequire_clean_tree = false\n"), Bump::Minor, true, &[]).unwrap();
+        let summary = run(
+            &load(&dir, "package.json", "[git]\nrequire_clean_tree = false\n"),
+            Bump::Minor,
+            true,
+            &[],
+        )
+        .unwrap();
         assert_eq!(summary.next.to_string(), "1.3.0");
         assert!(summary.dry_run);
-        assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), "[package]\nversion = \"1.2.3\"\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("Cargo.toml")).unwrap(),
+            "[package]\nversion = \"1.2.3\"\n"
+        );
     }
 
     #[test]
@@ -129,16 +165,24 @@ mod tests {
         write(&dir, "bad.json", "not json");
         let pkg = dir.join("package.json").to_string_lossy().to_string();
         let bad = dir.join("bad.json").to_string_lossy().to_string();
-        write(&dir, "release.toml", &format!(
-            "[version]\ncurrent_source = \"{pkg}\"\n[git]\nrequire_clean_tree = false\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n[[manifest]]\npath = \"{bad}\"\nkind = \"json\"\nfield = \"version\"\n"
-        ));
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                "[version]\ncurrent_source = \"{pkg}\"\n[git]\nrequire_clean_tree = false\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n[[manifest]]\npath = \"{bad}\"\nkind = \"json\"\nfield = \"version\"\n"
+            ),
+        );
         let cfg = config::load(dir.join("release.toml")).unwrap();
         assert!(run(&cfg, Bump::Minor, false, &[]).is_err());
-        assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), r#"{"version": "1.2.3"}"#);
+        assert_eq!(
+            fs::read_to_string(dir.join("package.json")).unwrap(),
+            r#"{"version": "1.2.3"}"#
+        );
     }
 
     #[test]
     #[cfg_attr(not(unix), ignore)]
+    #[allow(clippy::permissions_set_readonly_false)]
     fn write_failure_restores_previously_written_files() {
         let dir = tmp("cutver-bump-rollback");
         let a = dir.join("a");
@@ -149,15 +193,22 @@ mod tests {
         write(&b, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
         let pkg = a.join("package.json").to_string_lossy().to_string();
         let cargo = b.join("Cargo.toml").to_string_lossy().to_string();
-        write(&dir, "release.toml", &format!(
-            "[version]\ncurrent_source = \"{pkg}\"\n[git]\nrequire_clean_tree = false\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n[[manifest]]\npath = \"{cargo}\"\nkind = \"cargo-package\"\n"
-        ));
+        write(
+            &dir,
+            "release.toml",
+            &format!(
+                "[version]\ncurrent_source = \"{pkg}\"\n[git]\nrequire_clean_tree = false\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n[[manifest]]\npath = \"{cargo}\"\nkind = \"cargo-package\"\n"
+            ),
+        );
         let mut perms = fs::metadata(&b).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(&b, perms).unwrap();
         let cfg = config::load(dir.join("release.toml")).unwrap();
         assert!(run(&cfg, Bump::Minor, false, &[]).is_err());
-        assert_eq!(fs::read_to_string(a.join("package.json")).unwrap(), r#"{"version": "1.2.3"}"#);
+        assert_eq!(
+            fs::read_to_string(a.join("package.json")).unwrap(),
+            r#"{"version": "1.2.3"}"#
+        );
         let mut perms = fs::metadata(&b).unwrap().permissions();
         perms.set_readonly(false);
         let _ = fs::set_permissions(&b, perms);

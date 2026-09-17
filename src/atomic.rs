@@ -10,7 +10,11 @@ pub enum Error {
     #[error("failed to write temp file '{path}': {source}")]
     TempWrite { path: String, source: io::Error },
     #[error("failed to rename '{src}' to '{dst}': {source}")]
-    Rename { src: String, dst: String, source: io::Error },
+    Rename {
+        src: String,
+        dst: String,
+        source: io::Error,
+    },
 }
 
 /// Write `contents` to `path` atomically using a same-directory temp file and
@@ -21,11 +25,16 @@ pub fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
-        .ok_or_else(|| Error::InvalidPath { path: path.display().to_string() })?
+        .ok_or_else(|| Error::InvalidPath {
+            path: path.display().to_string(),
+        })?
         .to_string_lossy();
     let tmp = dir.join(format!(".{name}.cutver-tmp"));
 
-    fs::write(&tmp, contents).map_err(|e| Error::TempWrite { path: tmp.display().to_string(), source: e })?;
+    fs::write(&tmp, contents).map_err(|e| Error::TempWrite {
+        path: tmp.display().to_string(),
+        source: e,
+    })?;
     fs::rename(&tmp, path).map_err(|e| Error::Rename {
         src: tmp.display().to_string(),
         dst: path.display().to_string(),

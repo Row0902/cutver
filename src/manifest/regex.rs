@@ -10,10 +10,7 @@ pub struct RegexEditor {
 
 impl RegexEditor {
     pub fn new(pattern: String, replacement: String) -> Self {
-        Self {
-            pattern,
-            replacement,
-        }
+        Self { pattern, replacement }
     }
 }
 
@@ -36,9 +33,7 @@ impl ManifestEditor for RegexEditor {
         if re.find_iter(content).count() == 0 {
             return Err(Error::NoMatch(self.pattern.clone()));
         }
-        let replacement = self
-            .replacement
-            .replace("{{version}}", &version.to_string());
+        let replacement = self.replacement.replace("{{version}}", &version.to_string());
         Ok(re.replace_all(content, replacement.as_str()).into_owned())
     }
 }
@@ -53,35 +48,26 @@ mod tests {
 
     #[test]
     fn reads_captured_version() {
-        let v = RegexEditor::new(
-            r#"VERSION = "([^"]+)""#.into(),
-            r#"VERSION = "{{version}}""#.into(),
-        )
-        .read_version(FIXTURE)
-        .unwrap();
+        let v = RegexEditor::new(r#"VERSION = "([^"]+)""#.into(), r#"VERSION = "{{version}}""#.into())
+            .read_version(FIXTURE)
+            .unwrap();
         assert_eq!(v, Version::parse("1.2.3").unwrap());
     }
 
     #[test]
     fn writes_with_capture_group_and_version_token() {
-        let out = RegexEditor::new(
-            r#"VERSION = "([^"]+)""#.into(),
-            r#"VERSION = "{{version}}""#.into(),
-        )
-        .write_version(FIXTURE, &Version::parse("1.3.0").unwrap())
-        .unwrap();
+        let out = RegexEditor::new(r#"VERSION = "([^"]+)""#.into(), r#"VERSION = "{{version}}""#.into())
+            .write_version(FIXTURE, &Version::parse("1.3.0").unwrap())
+            .unwrap();
         assert!(out.contains(r#"VERSION = "1.3.0""#), "{out}");
         assert!(out.contains("# release marker"));
     }
 
     #[test]
     fn writes_without_capture_group() {
-        let out = RegexEditor::new(
-            r"release/v\d+\.\d+\.\d+".into(),
-            "release/v{{version}}".into(),
-        )
-        .write_version("url = release/v1.2.3", &Version::parse("2.0.0").unwrap())
-        .unwrap();
+        let out = RegexEditor::new(r"release/v\d+\.\d+\.\d+".into(), "release/v{{version}}".into())
+            .write_version("url = release/v1.2.3", &Version::parse("2.0.0").unwrap())
+            .unwrap();
         assert_eq!(out, "url = release/v2.0.0");
     }
 

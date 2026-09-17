@@ -36,9 +36,7 @@ use crate::config;
 
 pub fn editor_for(entry: &config::Manifest) -> Result<Box<dyn ManifestEditor>, Error> {
     match entry.kind.as_str() {
-        "json" => Ok(Box::new(json::JsonEditor::new(
-            entry.field.clone().unwrap_or_default(),
-        ))),
+        "json" => Ok(Box::new(json::JsonEditor::new(entry.field.clone().unwrap_or_default()))),
         "toml" | "cargo-package" => Ok(Box::new(cargo_toml::CargoEditor)),
         "gradle" => Ok(Box::new(gradle::GradleEditor::new(
             entry.version_name_field.clone().unwrap_or_default(),
