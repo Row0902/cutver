@@ -269,6 +269,7 @@ check = "true""#,
 }
 
 #[test]
+#[cfg_attr(not(unix), ignore)]
 fn bump_rolls_back_manifests_when_commit_fails() {
     use std::os::unix::fs::PermissionsExt;
 

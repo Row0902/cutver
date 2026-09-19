@@ -140,9 +140,9 @@ fn kill_tree(child: &mut Child) {
     }
     #[cfg(windows)]
     {
-        let pid = child.id();
+        let pid = child.id().to_string();
         let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .args(["/F", "/T", "/PID", pid.as_str()])
             .output();
         let _ = child.kill();
     }

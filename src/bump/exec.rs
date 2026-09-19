@@ -65,12 +65,9 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
         rollback(&computed, &paths_to_stage);
         Error::Commit(e)
     })?;
-    let tag_report = git::tag(repo, &tag, &next.to_string(), dry_run).map_err(|e| {
-        rollback(&computed, &paths_to_stage);
-        Error::Tag {
-            tag: tag.clone(),
-            source: e,
-        }
+    let tag_report = git::tag(repo, &tag, &next.to_string(), dry_run).map_err(|e| Error::Tag {
+        tag: tag.clone(),
+        source: e,
     })?;
     let tag_skipped = tag_report.is_some() && !dry_run;
 
