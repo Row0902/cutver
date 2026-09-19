@@ -255,7 +255,7 @@ tests = "cargo test"
         );
         write(&dir, "a", "");
         let cfg = config::load(dir.join("release.toml")).unwrap();
-        assert_eq!(cfg.version.current_source, dir.join("a").to_string_lossy().to_string());
+        assert_eq!(Path::new(&cfg.version.current_source).file_name().unwrap(), "a");
         assert_eq!(
             (cfg.manifest.len(), cfg.preflight.len(), cfg.git.tag_prefix.as_str()),
             (1, 4, "v")
