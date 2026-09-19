@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -75,11 +76,26 @@ jobs:
     name: Upload release assets
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign SHA256SUMS with Cosign
+        run: |
+          cosign sign-blob \
+            --yes \
+            --bundle dist/SHA256SUMS.bundle \
+            dist/SHA256SUMS
       - name: Create release and upload binaries
         uses: softprops/action-gh-release@v3
         with:
