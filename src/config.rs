@@ -48,6 +48,23 @@ pub struct Config {
     pub changelog: Changelog,
     #[serde(default)]
     pub git: Git,
+    #[serde(default)]
+    pub hooks: Hooks,
+    #[serde(default)]
+    pub publish: Publish,
+}
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Hooks {
+    pub pre_bump: Option<String>,
+    pub post_bump: Option<String>,
+}
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Publish {
+    #[serde(default)]
+    pub push: bool,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    pub default_timeout: Option<u64>,
 }
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct VersionSection {
@@ -784,5 +801,39 @@ fallback_entry = "Custom fallback notes."
         assert_eq!(c.changelog.mode, "template");
         assert!(!c.changelog.include_scopes);
         assert_eq!(c.changelog.fallback_entry, "Custom fallback notes.");
+    }
+
+    #[test]
+    fn hooks_and_publish_parsing_and_defaults() {
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[hooks]
+pre_bump = "echo pre"
+post_bump = "cargo check"
+
+[publish]
+push = true
+commands = ["cargo publish", "gh release create v{version}"]
+default_timeout = 60
+"#;
+        let c = load_str(toml).unwrap();
+        assert_eq!(c.hooks.pre_bump.as_deref(), Some("echo pre"));
+        assert_eq!(c.hooks.post_bump.as_deref(), Some("cargo check"));
+        assert!(c.publish.push);
+        assert_eq!(
+            c.publish.commands,
+            vec!["cargo publish", "gh release create v{version}"]
+        );
+        assert_eq!(c.publish.default_timeout, Some(60));
+
+        let default_cfg = load_str(&manifest("cargo-package", "")).unwrap();
+        assert_eq!(default_cfg.hooks.pre_bump, None);
+        assert_eq!(default_cfg.hooks.post_bump, None);
+        assert!(!default_cfg.publish.push);
+        assert!(default_cfg.publish.commands.is_empty());
+        assert_eq!(default_cfg.publish.default_timeout, None);
     }
 }

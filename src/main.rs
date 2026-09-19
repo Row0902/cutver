@@ -101,8 +101,25 @@ fn print_summary(summary: &Summary) {
     if let Some(cl) = &summary.changelog {
         println!("  changelog: {cl}");
     }
+    if let Some(hook) = &summary.post_bump {
+        println!("  post_bump: {hook}");
+    }
     println!("  commit: {}", summary.commit_message);
     println!("  tag: {}", summary.tag);
+    if summary.publish_push || !summary.publish_commands.is_empty() {
+        println!("  publish:");
+        if let Some(cmd) = &summary.publish_push_command {
+            println!("    push: {cmd}");
+        } else if summary.publish_push {
+            println!("    push: true");
+        }
+        if !summary.publish_commands.is_empty() {
+            println!("    commands:");
+            for cmd in &summary.publish_commands {
+                println!("      - {cmd}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

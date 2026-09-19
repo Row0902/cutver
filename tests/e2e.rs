@@ -816,3 +816,223 @@ require_clean_tree = true
     assert!(cl.contains("Static template notes."));
     assert!(!cl.contains("### Features"));
 }
+
+#[test]
+fn post_bump_runs_in_dry_run_and_real_bump() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("post-bump-runs");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = false
+
+[hooks]
+post_bump = "touch post_bump_ran.txt"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+
+    // Dry run: summary records post_bump, command NOT executed
+    let dry_summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
+    assert!(dry_summary.dry_run);
+    assert_eq!(dry_summary.post_bump.as_deref(), Some("touch post_bump_ran.txt"));
+    assert!(!fixture.dir.join("post_bump_ran.txt").exists());
+
+    // Real run: post_bump executes and file is created
+    let real_summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert!(!real_summary.dry_run);
+    assert_eq!(real_summary.post_bump.as_deref(), Some("touch post_bump_ran.txt"));
+    assert!(fixture.dir.join("post_bump_ran.txt").exists());
+}
+
+#[test]
+fn post_bump_modifies_file_and_file_is_staged_and_committed() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("post-bump-modify");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+
+[hooks]
+post_bump = "echo \"lockfile-version-1.3.0\" > Cargo.lock"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("Cargo.lock", "lockfile-version-1.2.3\n");
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+
+    // Check that Cargo.lock was updated and included in the release commit
+    assert_eq!(fixture.read("Cargo.lock").trim(), "lockfile-version-1.3.0");
+    let commit_files = head_commit_files(fixture);
+    assert!(
+        commit_files.contains(&"Cargo.lock".to_string()),
+        "commit_files: {commit_files:?}"
+    );
+
+    // Tree should be clean after bump
+    let status_out = run_git(&fixture.dir, &["status", "--porcelain"]);
+    assert!(String::from_utf8_lossy(&status_out.stdout).trim().is_empty());
+}
+
+#[test]
+fn post_bump_failure_triggers_rollback_and_aborts() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("post-bump-fail");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+
+[hooks]
+post_bump = "exit 1"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let res = bump_run(&cfg, Bump::Minor, false, &[]);
+    assert!(res.is_err(), "expected bump to fail due to post_bump exit 1");
+
+    // Manifests rolled back to 1.2.3
+    assert!(fixture.read("package.json").contains("\"version\": \"1.2.3\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.3\""));
+    assert!(!fixture.read("CHANGELOG.md").contains("1.3.0"));
+
+    // No commit or tag created
+    assert_eq!(commit_count(fixture), 1);
+    assert!(!tag_exists(fixture, "v1.3.0"));
+}
+
+#[test]
+fn publish_push_and_commands_reported_in_dry_run_and_executed_in_real_run() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("publish-push-cmds");
+    let fixture = guard.fixture();
+    let remote = Fixture::new("remote-target");
+    run_git_ok(&remote.dir, &["init", "--bare"]);
+
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+require_branch = "main"
+
+[publish]
+push = true
+commands = ["echo published {version} > published.txt"]
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    run_git_ok(&fixture.dir, &["checkout", "-B", "main"]);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["remote", "add", "origin", remote.dir.to_str().unwrap()]);
+
+    let cfg = config::load("cutver.toml").unwrap();
+
+    // Dry run: reported in summary, neither push nor commands executed
+    let dry_summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
+    assert!(dry_summary.dry_run);
+    assert!(dry_summary.publish_push);
+    assert_eq!(
+        dry_summary.publish_push_command.as_deref(),
+        Some("git push origin main --tags")
+    );
+    assert_eq!(
+        dry_summary.publish_commands,
+        vec!["echo published 1.3.0 > published.txt"]
+    );
+    assert!(!fixture.dir.join("published.txt").exists());
+    let remote_tags = run_git(&remote.dir, &["tag", "-l"]);
+    assert!(String::from_utf8_lossy(&remote_tags.stdout).trim().is_empty());
+
+    // Real run: push and commands executed
+    let real_summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert!(!real_summary.dry_run);
+    assert!(real_summary.publish_push);
+    assert_eq!(
+        real_summary.publish_commands,
+        vec!["echo published 1.3.0 > published.txt"]
+    );
+    assert!(fixture.dir.join("published.txt").exists());
+    assert_eq!(fixture.read("published.txt").trim(), "published 1.3.0");
+
+    // Verify tag pushed to remote
+    let remote_tags = run_git(&remote.dir, &["tag", "-l"]);
+    assert!(String::from_utf8_lossy(&remote_tags.stdout).contains("v1.3.0"));
+}

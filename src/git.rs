@@ -174,6 +174,66 @@ pub fn tag(repo: impl AsRef<Path>, tag_name: &str, version: &str, dry_run: bool)
     }
 }
 
+pub fn push(
+    repo: impl AsRef<Path>,
+    branch: Option<&str>,
+    include_tags: bool,
+    dry_run: bool,
+) -> Result<Option<String>, Error> {
+    if dry_run {
+        return Ok(Some(
+            format!(
+                "git push origin {} {}",
+                branch.unwrap_or("HEAD"),
+                if include_tags { "--tags" } else { "" }
+            )
+            .trim()
+            .to_string(),
+        ));
+    }
+    let target = branch.unwrap_or("HEAD");
+    let mut args = vec!["push", "origin", target];
+    if include_tags {
+        args.push("--tags");
+    }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(&args)
+        .status()
+        .map_err(|e| Error::Command {
+            command: args.join(" "),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: args.join(" "),
+            status,
+        })
+    }
+}
+
+pub fn status_files(repo: impl AsRef<Path>) -> Result<Vec<String>, Error> {
+    let text = stdout_text(run_git(&repo, &["status", "--porcelain"])?, "status --porcelain")?;
+    let mut files = Vec::new();
+    for line in text.lines() {
+        if line.len() >= 4 {
+            let mut file_path = line[3..].trim();
+            if file_path.starts_with('"') && file_path.ends_with('"') && file_path.len() >= 2 {
+                file_path = &file_path[1..file_path.len() - 1];
+            }
+            if let Some((_, new_path)) = file_path.split_once(" -> ") {
+                file_path = new_path.trim();
+            }
+            if !file_path.is_empty() {
+                files.push(file_path.to_string());
+            }
+        }
+    }
+    Ok(files)
+}
+
 pub fn commit_message(template: &str, version: &str) -> String {
     template.replace("{version}", version)
 }
@@ -399,5 +459,66 @@ mod tests {
         assert_eq!(new_commits.len(), 2);
         assert_eq!(new_commits[0], "fix: small bug");
         assert_eq!(new_commits[1], "feat: new feature\n\nDetailed explanation");
+    }
+
+    #[test]
+    fn push_dry_run_formatting() {
+        assert_eq!(
+            push(".", Some("main"), true, true).unwrap(),
+            Some("git push origin main --tags".into())
+        );
+        assert_eq!(
+            push(".", None, true, true).unwrap(),
+            Some("git push origin HEAD --tags".into())
+        );
+        assert_eq!(
+            push(".", Some("main"), false, true).unwrap(),
+            Some("git push origin main".into())
+        );
+        assert_eq!(
+            push(".", None, false, true).unwrap(),
+            Some("git push origin HEAD".into())
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn push_executes_to_remote() {
+        let dir = tmp_repo();
+        let remote = std::env::temp_dir().join(tmp_id("cutver-git-remote"));
+        let _ = fs::remove_dir_all(&remote);
+        fs::create_dir_all(&remote).unwrap();
+        assert!(
+            Command::new("git")
+                .current_dir(&remote)
+                .args(["init", "--bare", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git(&dir, &["tag", "v1.0.0"]);
+
+        assert_eq!(push(&dir, None, true, false).unwrap(), None);
+
+        let out = Command::new("git")
+            .current_dir(&remote)
+            .args(["tag", "-l", "v1.0.0"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "v1.0.0");
+        let _ = fs::remove_dir_all(&remote);
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn status_files_detects_changes() {
+        let dir = tmp_repo();
+        assert!(status_files(&dir).unwrap().is_empty());
+        fs::write(dir.join("x"), "modified").unwrap();
+        fs::write(dir.join("y.txt"), "untracked").unwrap();
+        let files = status_files(&dir).unwrap();
+        assert!(files.contains(&"x".to_string()));
+        assert!(files.contains(&"y.txt".to_string()));
     }
 }

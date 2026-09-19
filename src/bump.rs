@@ -46,6 +46,30 @@ pub enum Error {
         source: crate::atomic::Error,
         rollback: String,
     },
+    #[error("post_bump hook '{command}' failed with status {status}")]
+    PostBumpHookFailed {
+        command: String,
+        status: std::process::ExitStatus,
+    },
+    #[error("failed to run post_bump hook '{command}': {source}")]
+    PostBumpHookSpawn {
+        command: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("publish push failed: {0}")]
+    Push(#[source] crate::git::Error),
+    #[error("publish command '{command}' failed with status {status}")]
+    PublishCommandFailed {
+        command: String,
+        status: std::process::ExitStatus,
+    },
+    #[error("failed to run publish command '{command}': {source}")]
+    PublishCommandSpawn {
+        command: String,
+        #[source]
+        source: io::Error,
+    },
 }
 
 #[derive(Debug)]
@@ -67,6 +91,10 @@ pub struct Summary {
     pub commit_message: String,
     pub tag: String,
     pub tag_skipped: bool,
+    pub post_bump: Option<String>,
+    pub publish_push: bool,
+    pub publish_push_command: Option<String>,
+    pub publish_commands: Vec<String>,
 }
 
 #[derive(Debug)]

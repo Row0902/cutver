@@ -20,3 +20,6 @@ tag_prefix = "v"
 commit_message = "chore(release): v{version}"
 require_clean_tree = true
 require_branch = "main"
+
+[hooks]
+post_bump = "cargo check --workspace"

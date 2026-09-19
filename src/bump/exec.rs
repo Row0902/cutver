@@ -111,6 +111,50 @@ pub fn run(
         None
     };
 
+    let summary_post_bump = if let Some(raw_post_bump) = &config.hooks.post_bump {
+        let cmd = format_command(raw_post_bump, &next.to_string(), &tag);
+        if !dry_run {
+            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+            let status = std::process::Command::new(shell)
+                .arg(flag)
+                .arg(&cmd)
+                .current_dir(&config.root_dir)
+                .status()
+                .map_err(|e| {
+                    rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                    Error::PostBumpHookSpawn {
+                        command: cmd.clone(),
+                        source: e,
+                    }
+                })?;
+            if !status.success() {
+                rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                return Err(Error::PostBumpHookFailed { command: cmd, status });
+            }
+            let modified = match git::status_files(repo) {
+                Ok(m) => m,
+                Err(e) => {
+                    rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                    return Err(Error::Git(e));
+                }
+            };
+            for f in modified {
+                let rel_f = Path::new(&f);
+                let abs_f = repo.join(rel_f);
+                let already_staged = paths_to_stage.iter().any(|p| {
+                    let p_path = Path::new(p);
+                    p_path == rel_f || p_path == abs_f || p_path.ends_with(rel_f)
+                });
+                if !already_staged {
+                    paths_to_stage.push(f);
+                }
+            }
+        }
+        Some(cmd)
+    } else {
+        None
+    };
+
     git::stage(repo, &paths_to_stage, dry_run).map_err(|e| {
         rollback(&computed, &paths_to_stage, original_changelog.as_ref());
         unstage(repo);
@@ -127,6 +171,36 @@ pub fn run(
     })?;
     let tag_skipped = tag_report.is_some() && !dry_run;
 
+    let publish_push_command = if config.publish.push {
+        git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)?
+    } else {
+        None
+    };
+
+    let mut publish_commands = Vec::new();
+    for cmd in &config.publish.commands {
+        let formatted = format_command(cmd, &next.to_string(), &tag);
+        if !dry_run {
+            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+            let status = std::process::Command::new(shell)
+                .arg(flag)
+                .arg(&formatted)
+                .current_dir(&config.root_dir)
+                .status()
+                .map_err(|e| Error::PublishCommandSpawn {
+                    command: formatted.clone(),
+                    source: e,
+                })?;
+            if !status.success() {
+                return Err(Error::PublishCommandFailed {
+                    command: formatted,
+                    status,
+                });
+            }
+        }
+        publish_commands.push(formatted);
+    }
+
     Ok(Summary {
         source: source_entry.path.clone(),
         current,
@@ -138,7 +212,15 @@ pub fn run(
         commit_message,
         tag,
         tag_skipped,
+        post_bump: summary_post_bump,
+        publish_push: config.publish.push,
+        publish_push_command,
+        publish_commands,
     })
+}
+
+fn format_command(template: &str, version: &str, tag: &str) -> String {
+    template.replace("{version}", version).replace("{tag}", tag)
 }
 
 /// Single source of truth for mapping `config.version.current_source` to its
