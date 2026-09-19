@@ -182,6 +182,23 @@ pub fn tag_name(prefix: &str, version: &str) -> String {
     format!("{prefix}{version}")
 }
 
+pub fn init_test_repo(dir: impl AsRef<std::path::Path>) {
+    let dir = dir.as_ref();
+    let run = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .expect("failed to execute git");
+        assert!(status.success(), "git command failed: {:?}", args);
+    };
+    run(&["init"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test User"]);
+    run(&["config", "commit.gpgsign", "false"]);
+    run(&["config", "tag.gpgsign", "false"]);
+}
+
 #[cfg(test)]
 mod tests {
     static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -126,23 +126,6 @@ mod tests {
         dir
     }
 
-    fn init_git(dir: &Path) {
-        let run = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(args)
-                .status()
-                .expect("failed to execute git");
-            assert!(status.success(), "git command failed: {:?}", args);
-        };
-        run(&["init"]);
-        run(&["config", "user.email", "test@example.com"]);
-        run(&["config", "user.name", "Test User"]);
-        run(&["config", "commit.gpgsign", "false"]);
-        run(&["config", "tag.gpgsign", "false"]);
-    }
-
     fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, text).unwrap();
@@ -207,7 +190,7 @@ kind = "cargo-package"
     #[test]
     fn bump_dry_run_does_not_mutate() {
         let dir = temp_dir("cutver-bump-stub");
-        init_git(&dir);
+        cutver::git::init_test_repo(&dir);
         write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
         write(
