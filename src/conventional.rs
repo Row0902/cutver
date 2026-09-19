@@ -61,14 +61,19 @@ impl ConventionalCommit {
         }
 
         let is_breaking = header_breaking
-            || body
-                .as_ref()
-                .is_some_and(|b| b.contains("BREAKING CHANGE:") || b.contains("BREAKING-CHANGE:"))
+            || body.as_ref().is_some_and(|b| {
+                b.contains("BREAKING CHANGE:")
+                    || b.contains("BREAKING-CHANGE:")
+                    || b.contains("BREAKING CHANGE :")
+                    || b.contains("BREAKING-CHANGE :")
+            })
             || footers.iter().any(|(k, v)| {
                 k == "BREAKING CHANGE"
                     || k == "BREAKING-CHANGE"
                     || format!("{k}: {v}").contains("BREAKING CHANGE:")
                     || format!("{k}: {v}").contains("BREAKING-CHANGE:")
+                    || format!("{k}: {v}").contains("BREAKING CHANGE :")
+                    || format!("{k}: {v}").contains("BREAKING-CHANGE :")
             });
 
         Some(ConventionalCommit {
@@ -165,10 +170,16 @@ fn is_footer_start(line: &str) -> bool {
 
 fn parse_footer_line(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
-    if let Some(rest) = trimmed.strip_prefix("BREAKING CHANGE:") {
+    if let Some(rest) = trimmed
+        .strip_prefix("BREAKING CHANGE:")
+        .or_else(|| trimmed.strip_prefix("BREAKING CHANGE :"))
+    {
         return Some(("BREAKING CHANGE".to_string(), rest.trim().to_string()));
     }
-    if let Some(rest) = trimmed.strip_prefix("BREAKING-CHANGE:") {
+    if let Some(rest) = trimmed
+        .strip_prefix("BREAKING-CHANGE:")
+        .or_else(|| trimmed.strip_prefix("BREAKING-CHANGE :"))
+    {
         return Some(("BREAKING-CHANGE".to_string(), rest.trim().to_string()));
     }
     if let Some((token, rest)) = trimmed.split_once(": ")
@@ -452,5 +463,20 @@ Signed-off-by: Maintainer <maintainer@example.com>"#;
         let (bump, parsed) = parse_and_deduce_bump(&non_conventional);
         assert_eq!(bump, Bump::Patch);
         assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn breaking_change_footer_with_space_before_colon() {
+        let msg1 = "fix: edge case\n\nBREAKING CHANGE : database schema dropped";
+        let c1 = ConventionalCommit::parse(msg1).expect("parses conventional commit");
+        assert!(c1.is_breaking);
+        assert_eq!(c1.footers[0].0, "BREAKING CHANGE");
+        assert_eq!(c1.footers[0].1, "database schema dropped");
+
+        let msg2 = "fix: edge case\n\nBREAKING-CHANGE : database schema dropped";
+        let c2 = ConventionalCommit::parse(msg2).expect("parses conventional commit");
+        assert!(c2.is_breaking);
+        assert_eq!(c2.footers[0].0, "BREAKING-CHANGE");
+        assert_eq!(c2.footers[0].1, "database schema dropped");
     }
 }
