@@ -20,6 +20,14 @@ pub enum Error {
     },
 }
 
+/// RAII guard that removes the temporary file at `path` on drop unless explicitly disarmed.
+///
+/// Cleanup invariants:
+/// - Initialized in the armed state (`active: true`) as soon as the temp file path is prepared.
+/// - If `File::create`, writing, syncing, or `fs::rename` fails, the guard drops while still
+///   armed and cleans up the temporary file from disk (best-effort).
+/// - If `File::create` failed before creating the file, `remove_file` in drop safely ignores NotFound.
+/// - Only when `fs::rename` succeeds is `disarm()` called, ensuring the file remains in place.
 struct TempFileGuard<'a> {
     path: &'a Path,
     active: bool,
@@ -27,11 +35,7 @@ struct TempFileGuard<'a> {
 
 impl<'a> TempFileGuard<'a> {
     fn new(path: &'a Path) -> Self {
-        Self { path, active: false }
-    }
-
-    fn arm(&mut self) {
-        self.active = true;
+        Self { path, active: true }
     }
 
     fn disarm(&mut self) {
@@ -81,7 +85,6 @@ where
             path: tmp.display().to_string(),
             source: e,
         })?;
-        guard.arm();
 
         write_and_sync(&mut file, contents).map_err(|e| Error::TempWrite {
             path: tmp.display().to_string(),
