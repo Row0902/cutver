@@ -27,10 +27,7 @@ struct TempFileGuard<'a> {
 
 impl<'a> TempFileGuard<'a> {
     fn new(path: &'a Path) -> Self {
-        Self {
-            path,
-            active: false,
-        }
+        Self { path, active: false }
     }
 
     fn arm(&mut self) {
@@ -72,11 +69,7 @@ pub fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
     })
 }
 
-fn write_atomic_impl<F>(
-    path: &Path,
-    contents: &[u8],
-    write_and_sync: F,
-) -> Result<(), Error>
+fn write_atomic_impl<F>(path: &Path, contents: &[u8], write_and_sync: F) -> Result<(), Error>
 where
     F: FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
 {
