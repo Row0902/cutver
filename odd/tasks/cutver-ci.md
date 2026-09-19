@@ -21,11 +21,14 @@ Design decisions:
 
 ## Tasks
 
-- [ ] W1. .github/workflows/ci.yml (test matrix 3 OS, cached, fmt+clippy).
-- [ ] W2. .github/workflows/release.yml (5-target parallel build + release upload).
-- [ ] W3. Push, verify the first runs go green, adjust as needed.
+- [x] W1. .github/workflows/ci.yml (test matrix 3 OS, cached, fmt+clippy).
+- [x] W2. .github/workflows/release.yml (5-target parallel build + release upload).
+- [x] W3. Push, verify the first runs go green, adjust as needed.
 
 ## Evidence log
 
 | Task | Commit | Checks |
 | --- | --- | --- |
+| W1+W2 | 621d13a | Workflows creados y validados sintácticamente |
+| W3 | 7a3b21c | GitHub Actions CI run #35418027677: 100% green en Ubuntu, macOS, Windows y Publish dry-run |
+
