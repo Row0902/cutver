@@ -102,9 +102,10 @@ fn assert_bumped(fixture: &Fixture) {
 
 #[test]
 fn bump_minor_happy_path() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("happy");
     write_fixture(
         &guard,
@@ -131,9 +132,10 @@ check = "true""#,
 
 #[test]
 fn bump_and_doctor_from_subdirectory() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("from-subdir");
     write_fixture(
         &guard,
@@ -153,9 +155,10 @@ check = "true""#,
 
 #[test]
 fn bump_aborts_when_preflight_fails() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("preflight-fail");
     write_fixture(
         &guard,
@@ -171,9 +174,10 @@ check = "false""#,
 
 #[test]
 fn bump_dry_run_performs_no_mutation() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("dry-run");
     write_fixture(
         &guard,
@@ -190,9 +194,10 @@ check = "true""#,
 
 #[test]
 fn bump_aborts_when_release_tag_exists_elsewhere() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("tag-conflict");
     write_fixture(
         &guard,
@@ -217,9 +222,10 @@ check = "true""#,
 
 #[test]
 fn bump_aborts_when_preflight_times_out() {
-    if !git_available() {
-        return;
-    }
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
     let guard = FixtureGuard::new("preflight-timeout");
     write_fixture(
         &guard,

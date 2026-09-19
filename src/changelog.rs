@@ -34,10 +34,15 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
         source: e,
     })?;
 
-    let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
-    if content.lines().any(|line| line == heading) {
+    let version_tag = format!("[{version}]");
+    if content
+        .lines()
+        .any(|line| line.starts_with("## [") && line.contains(&version_tag))
+    {
         return Ok(());
     }
+
+    let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
 
     let section = if template.is_empty() {
         format!("{}\n\n- Unreleased\n", heading)
@@ -128,6 +133,13 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn tmp_file(name: &str) -> std::path::PathBuf {
+        let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::env::temp_dir().join(format!("{}-{}-{}.md", name, std::process::id(), n))
+    }
+
     #[test]
     fn date_helper_known_values() {
         let epoch = SystemTime::UNIX_EPOCH;
@@ -145,7 +157,7 @@ mod tests {
 
     #[test]
     fn insert_into_file_with_existing_entries() {
-        let path = std::env::temp_dir().join("cutver-cl-existing.md");
+        let path = tmp_file("cutver-cl-existing");
         let base = "# Changelog\n\n## [1.0.0] - 2022-01-01\n\n- First release\n";
         let out = update_file(&path, base, "v1.1.0", "Maintenance and updates.");
         let today = format_date(SystemTime::now());
@@ -158,7 +170,7 @@ mod tests {
 
     #[test]
     fn insert_into_file_with_only_header() {
-        let path = std::env::temp_dir().join("cutver-cl-header.md");
+        let path = tmp_file("cutver-cl-header");
         let base = "# Changelog\n\nAll notable changes to this project.\n";
         let out = update_file(&path, base, "v1.0.0", "Maintenance and updates.");
         let today = format_date(SystemTime::now());
@@ -170,7 +182,7 @@ mod tests {
 
     #[test]
     fn insert_into_empty_file() {
-        let path = std::env::temp_dir().join("cutver-cl-empty.md");
+        let path = tmp_file("cutver-cl-empty");
         let out = update_file(&path, "", "v0.1.0", "Initial release.");
         let today = format_date(SystemTime::now());
 
@@ -179,7 +191,7 @@ mod tests {
 
     #[test]
     fn empty_template_uses_unreleased_bullet() {
-        let path = std::env::temp_dir().join("cutver-cl-template-empty.md");
+        let path = tmp_file("cutver-cl-template-empty");
         let out = update_file(&path, "# Changelog\n", "v1.0.0", "");
 
         assert!(out.contains("## [v1.0.0]"));
@@ -188,12 +200,38 @@ mod tests {
 
     #[test]
     fn idempotent_content_of_new_section() {
-        let path = std::env::temp_dir().join("cutver-cl-idempotent.md");
+        let path = tmp_file("cutver-cl-idempotent");
         let base = "# Changelog\n\n## [1.0.0] - 2022-01-01\n\n- First\n";
         update_file(&path, base, "v1.1.0", "Maintenance and updates.");
         let first = fs::read_to_string(&path).unwrap();
         update(&path, "v1.1.0", "Maintenance and updates.").unwrap();
         let second = fs::read_to_string(&path).unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn existing_section_with_older_date_is_unchanged() {
+        let path = tmp_file("cutver-cl-older-date");
+        let base = "# Changelog\n\n## [v1.3.0] - 2020-01-01\n\n- Older release notes.\n";
+        let out = update_file(&path, base, "v1.3.0", "Maintenance and updates.");
+        assert_eq!(out, base);
+    }
+
+    #[test]
+    fn idempotent_across_different_dates() {
+        let path = tmp_file("cutver-cl-idempotent-dates");
+        let base = "# Changelog\n\n## [v1.0.0] - 2020-01-01\n\n- Initial release\n";
+        let out = update_file(&path, base, "v1.1.0", "Release notes.");
+        let today = format_date(SystemTime::now());
+        assert!(out.contains(&format!("## [v1.1.0] - {today}")));
+
+        // Simulate subsequent run on a different date by changing the date in the file
+        let simulated_past = out.replace(&format!("## [v1.1.0] - {today}"), "## [v1.1.0] - 1999-12-31");
+        fs::write(&path, &simulated_past).unwrap();
+
+        // Second update for v1.1.0 should recognize the existing release and leave content unaltered
+        update(&path, "v1.1.0", "New notes.").unwrap();
+        let after_update = fs::read_to_string(&path).unwrap();
+        assert_eq!(after_update, simulated_past);
     }
 }
