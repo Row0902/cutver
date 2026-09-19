@@ -138,7 +138,15 @@ fn kill_tree(child: &mut Child) {
     unsafe {
         let _ = killpg(child.id() as i32, SIGKILL);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let pid = child.id();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = child.kill();
     }
