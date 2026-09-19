@@ -6,21 +6,31 @@ use semver::Version;
 pub struct GradleEditor {
     version_name_field: String,
     version_code_field: String,
+    name_re: Regex,
+    code_re: Regex,
 }
 
 impl GradleEditor {
-    pub fn new(version_name_field: String, version_code_field: String) -> Self {
-        Self {
+    pub fn try_new(version_name_field: String, version_code_field: String) -> Result<Self, Error> {
+        let name_re = Regex::new(&format!(r#"{}\s+"([^"]+)""#, regex::escape(&version_name_field)))?;
+        let code_re = Regex::new(&format!(r"{}\s+(\d+)", regex::escape(&version_code_field)))?;
+        Ok(Self {
             version_name_field,
             version_code_field,
-        }
+            name_re,
+            code_re,
+        })
+    }
+
+    pub fn new(version_name_field: String, version_code_field: String) -> Self {
+        Self::try_new(version_name_field, version_code_field).expect("valid regex for escaped field names")
     }
 }
 
 impl ManifestEditor for GradleEditor {
     fn read_version(&self, content: &str) -> Result<Version, Error> {
-        let re = Regex::new(&format!(r#"{}\s+"([^"]+)""#, regex::escape(&self.version_name_field)))?;
-        let cap = re
+        let cap = self
+            .name_re
             .captures(content)
             .ok_or_else(|| Error::TargetNotFound(self.version_name_field.clone()))?;
         let s = cap
@@ -31,14 +41,15 @@ impl ManifestEditor for GradleEditor {
     }
 
     fn write_version(&self, content: &str, version: &Version) -> Result<String, Error> {
-        let name_re = Regex::new(&format!(r#"{}\s+"[^"]+""#, regex::escape(&self.version_name_field)))?;
-        if !name_re.is_match(content) {
+        if !self.name_re.is_match(content) {
             return Err(Error::TargetNotFound(self.version_name_field.clone()));
         }
-        let out = name_re.replace_all(content, format!(r#"{} "{}""#, self.version_name_field, version));
+        let out = self
+            .name_re
+            .replace_all(content, format!(r#"{} "{}""#, self.version_name_field, version));
 
-        let code_re = Regex::new(&format!(r"{}\s+(\d+)", regex::escape(&self.version_code_field)))?;
-        let cap = code_re
+        let cap = self
+            .code_re
             .captures(&out)
             .ok_or_else(|| Error::TargetNotFound(self.version_code_field.clone()))?;
         let code: u64 = cap
@@ -50,7 +61,9 @@ impl ManifestEditor for GradleEditor {
                 kind: "gradle",
                 detail: format!("{} is not a valid integer: {e}", self.version_code_field),
             })?;
-        let result = code_re.replace_all(&out, format!(r#"{} {}"#, self.version_code_field, code + 1));
+        let result = self
+            .code_re
+            .replace_all(&out, format!(r#"{} {}"#, self.version_code_field, code + 1));
 
         Ok(result.into_owned())
     }

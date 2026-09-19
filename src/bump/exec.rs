@@ -105,18 +105,23 @@ fn current_source(
     Ok((entry, editor, version))
 }
 
+fn read_manifest(m: &crate::config::Manifest) -> Result<(Box<dyn manifest::ManifestEditor>, String, Version), Error> {
+    let content = read(&m.path)?;
+    let editor = manifest::editor_for(m).map_err(|e| Error::Manifest {
+        path: m.path.clone(),
+        source: e,
+    })?;
+    let version = editor.read_version(&content).map_err(|e| Error::Manifest {
+        path: m.path.clone(),
+        source: e,
+    })?;
+    Ok((editor, content, version))
+}
+
 fn compute(config: &Config, next: &Version) -> Result<Vec<Change>, Error> {
     let mut out = Vec::new();
     for m in &config.manifest {
-        let content = read(&m.path)?;
-        let editor = manifest::editor_for(m).map_err(|e| Error::Manifest {
-            path: m.path.clone(),
-            source: e,
-        })?;
-        let old = editor.read_version(&content).map_err(|e| Error::Manifest {
-            path: m.path.clone(),
-            source: e,
-        })?;
+        let (editor, content, old) = read_manifest(m)?;
         let new = editor.write_version(&content, next).map_err(|e| Error::Manifest {
             path: m.path.clone(),
             source: e,
@@ -186,15 +191,7 @@ pub fn doctor(config: &Config) -> Result<Vec<Drift>, Error> {
         if m.path == source_entry.path {
             continue;
         }
-        let content = read(&m.path)?;
-        let editor = manifest::editor_for(m).map_err(|e| Error::Manifest {
-            path: m.path.clone(),
-            source: e,
-        })?;
-        let actual = editor.read_version(&content).map_err(|e| Error::Manifest {
-            path: m.path.clone(),
-            source: e,
-        })?;
+        let (_editor, _content, actual) = read_manifest(m)?;
         if actual != expected {
             drifts.push(Drift {
                 path: m.path.clone(),

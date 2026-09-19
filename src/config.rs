@@ -17,10 +17,6 @@ pub enum ConfigError {
     DuplicateManifestPath(String),
     #[error("current_source '{0}' is not declared as a manifest path")]
     CurrentSourceNotFound(String),
-    #[error("manifest '{0}' has unknown kind '{1}'")]
-    UnknownKind(String, String),
-    #[error("manifest '{0}' of kind '{1}' is missing required field '{2}'")]
-    MissingField(String, String, String),
     #[error("preflight step '{0}' must be a string or inline table")]
     PreflightNotString(String),
     #[error("preflight step '{0}' is missing a string 'command' field")]
@@ -50,15 +46,29 @@ pub struct Config {
 pub struct VersionSection {
     pub current_source: String,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ManifestKind {
+    Json {
+        field: String,
+    },
+    #[serde(alias = "toml")]
+    CargoPackage,
+    Gradle {
+        version_name_field: String,
+        version_code_field: String,
+    },
+    Regex {
+        pattern: String,
+        replacement: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
     pub path: String,
-    pub kind: String,
-    pub field: Option<String>,
-    pub version_name_field: Option<String>,
-    pub version_code_field: Option<String>,
-    pub pattern: Option<String>,
-    pub replacement: Option<String>,
+    #[serde(flatten)]
+    pub kind: ManifestKind,
 }
 #[derive(Debug, Clone)]
 pub struct PreflightCommand {
@@ -242,29 +252,7 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
             config.version.current_source.clone(),
         ));
     }
-    for m in &config.manifest {
-        match m.kind.as_str() {
-            "json" => require(m.field.as_ref(), m, "field")?,
-            "gradle" => {
-                require(m.version_name_field.as_ref(), m, "version_name_field")?;
-                require(m.version_code_field.as_ref(), m, "version_code_field")?;
-            }
-            "regex" => {
-                require(m.pattern.as_ref(), m, "pattern")?;
-                require(m.replacement.as_ref(), m, "replacement")?;
-            }
-            "toml" | "cargo-package" => {}
-            _ => return Err(ConfigError::UnknownKind(m.path.clone(), m.kind.clone())),
-        }
-    }
     Ok(())
-}
-fn require<T>(opt: Option<&T>, m: &Manifest, field: &str) -> Result<(), ConfigError> {
-    if opt.is_none() {
-        Err(ConfigError::MissingField(m.path.clone(), m.kind.clone(), field.into()))
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -295,22 +283,10 @@ mod tests {
         let missing = "[version]\ncurrent_source = \"missing\"\n\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"";
         assert!(matches!(load_str(dup), Err(ConfigError::DuplicateManifestPath(_))));
         assert!(matches!(load_str(missing), Err(ConfigError::CurrentSourceNotFound(_))));
-        assert!(matches!(
-            load_str(&manifest("json", "")),
-            Err(ConfigError::MissingField(_, _, _))
-        ));
-        assert!(matches!(
-            load_str(&manifest("gradle", "")),
-            Err(ConfigError::MissingField(_, _, _))
-        ));
-        assert!(matches!(
-            load_str(&manifest("regex", "")),
-            Err(ConfigError::MissingField(_, _, _))
-        ));
-        assert!(matches!(
-            load_str(&manifest("unknown", "")),
-            Err(ConfigError::UnknownKind(_, _))
-        ));
+        assert!(matches!(load_str(&manifest("json", "")), Err(ConfigError::Parse(_))));
+        assert!(matches!(load_str(&manifest("gradle", "")), Err(ConfigError::Parse(_))));
+        assert!(matches!(load_str(&manifest("regex", "")), Err(ConfigError::Parse(_))));
+        assert!(matches!(load_str(&manifest("unknown", "")), Err(ConfigError::Parse(_))));
         assert!(matches!(
             load_str(&(manifest("cargo-package", "") + "\n[preflight]\ntests = 123")),
             Err(ConfigError::PreflightNotString(_))

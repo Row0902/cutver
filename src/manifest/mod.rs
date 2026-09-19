@@ -23,8 +23,6 @@ pub enum Error {
     NoMatch(String),
     #[error("regex error: {0}")]
     Regex(#[from] ::regex::Error),
-    #[error("unsupported manifest kind '{0}'")]
-    UnsupportedKind(String),
 }
 
 pub trait ManifestEditor: std::fmt::Debug + Send + Sync {
@@ -35,17 +33,18 @@ pub trait ManifestEditor: std::fmt::Debug + Send + Sync {
 use crate::config;
 
 pub fn editor_for(entry: &config::Manifest) -> Result<Box<dyn ManifestEditor>, Error> {
-    match entry.kind.as_str() {
-        "json" => Ok(Box::new(json::JsonEditor::new(entry.field.clone().unwrap_or_default()))),
-        "toml" | "cargo-package" => Ok(Box::new(cargo_toml::CargoEditor)),
-        "gradle" => Ok(Box::new(gradle::GradleEditor::new(
-            entry.version_name_field.clone().unwrap_or_default(),
-            entry.version_code_field.clone().unwrap_or_default(),
-        ))),
-        "regex" => Ok(Box::new(regex::RegexEditor::new(
-            entry.pattern.clone().unwrap_or_default(),
-            entry.replacement.clone().unwrap_or_default(),
-        ))),
-        other => Err(Error::UnsupportedKind(other.into())),
+    match &entry.kind {
+        config::ManifestKind::Json { field } => Ok(Box::new(json::JsonEditor::new(field.clone()))),
+        config::ManifestKind::CargoPackage => Ok(Box::new(cargo_toml::CargoEditor)),
+        config::ManifestKind::Gradle {
+            version_name_field,
+            version_code_field,
+        } => Ok(Box::new(gradle::GradleEditor::try_new(
+            version_name_field.clone(),
+            version_code_field.clone(),
+        )?)),
+        config::ManifestKind::Regex { pattern, replacement } => {
+            Ok(Box::new(regex::RegexEditor::new(pattern.clone(), replacement.clone())))
+        }
     }
 }
