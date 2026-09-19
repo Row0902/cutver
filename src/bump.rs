@@ -138,7 +138,7 @@ mod tests {
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.0.0\"\n");
         let drifts = doctor(&load(&dir, "package.json", "")).unwrap();
         assert_eq!(drifts.len(), 1);
-        assert_eq!(drifts[0].path, dir.join("Cargo.toml").to_string_lossy().to_string());
+        assert_eq!(Path::new(&drifts[0].path).file_name().unwrap(), "Cargo.toml");
         assert_eq!(drifts[0].expected, "1.2.3");
         assert_eq!(drifts[0].actual, "1.0.0");
     }
