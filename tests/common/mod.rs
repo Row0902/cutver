@@ -1,3 +1,10 @@
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn tmp_id(prefix: &str) -> String {
+    let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    format!("{}-{}-{}", prefix, std::process::id(), n)
+}
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -11,7 +18,7 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("cutver-e2e-{}-{}", name, std::process::id()));
+        let dir = std::env::temp_dir().join(tmp_id(&format!("cutver-e2e-{name}")));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Self { dir }

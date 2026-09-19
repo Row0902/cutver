@@ -168,6 +168,13 @@ fn shell() -> (&'static str, &'static str) {
 
 #[cfg(test)]
 mod tests {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn tmp_id(prefix: &str) -> String {
+        let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("{}-{}-{}", prefix, std::process::id(), n)
+    }
+
     use super::*;
     use crate::config::{PreflightCommand, PreflightSteps};
 
@@ -247,7 +254,7 @@ mod tests {
     #[test]
     #[cfg_attr(windows, ignore)]
     fn run_fails_fast_on_first_error() {
-        let marker = std::env::temp_dir().join(format!("cutver-failfast-{}", std::process::id()));
+        let marker = std::env::temp_dir().join(tmp_id("cutver-failfast"));
         let _ = std::fs::remove_file(&marker);
         let plan = plan(
             &[

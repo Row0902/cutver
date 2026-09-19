@@ -102,10 +102,15 @@ fn assert_bumped(fixture: &Fixture) {
 
 #[test]
 fn bump_minor_happy_path() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("happy");
-    write_fixture(&guard, r#"[preflight]
-check = "true""#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
     let cfg = config::load("release.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
@@ -114,20 +119,31 @@ check = "true""#);
     assert_bumped(fixture);
     assert_eq!(commit_count(fixture), 2);
     assert_eq!(head_commit_message(fixture), "chore(release): v1.3.0");
-    let mut files = head_commit_files(fixture); files.sort();
-    assert_eq!(files, vec!["CHANGELOG.md", "Cargo.toml", "android/build.gradle.kts", "package.json"]);
+    let mut files = head_commit_files(fixture);
+    files.sort();
+    assert_eq!(
+        files,
+        vec!["CHANGELOG.md", "Cargo.toml", "android/build.gradle.kts", "package.json"]
+    );
     assert!(tag_exists(fixture, "v1.3.0"));
     assert!(is_annotated_tag(fixture, "v1.3.0"));
 }
 
 #[test]
 fn bump_and_doctor_from_subdirectory() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("from-subdir");
-    write_fixture(&guard, r#"[preflight]
-check = "true""#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
     let fixture = guard.fixture();
-    let sub = fixture.dir.join("src"); std::fs::create_dir_all(&sub).unwrap(); std::env::set_current_dir(&sub).unwrap();
+    let sub = fixture.dir.join("src");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::env::set_current_dir(&sub).unwrap();
     let cfg = config::discover(".").unwrap();
     bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
     assert!(fixture.read("package.json").contains("\"version\": \"1.3.0\""));
@@ -137,10 +153,15 @@ check = "true""#);
 
 #[test]
 fn bump_aborts_when_preflight_fails() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("preflight-fail");
-    write_fixture(&guard, r#"[preflight]
-check = "false""#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "false""#,
+    );
     let cfg = config::load("release.toml").unwrap();
     assert!(bump_run(&cfg, Bump::Minor, false, &[]).is_err());
     assert_versions_at_123(guard.fixture());
@@ -150,10 +171,15 @@ check = "false""#);
 
 #[test]
 fn bump_dry_run_performs_no_mutation() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("dry-run");
-    write_fixture(&guard, r#"[preflight]
-check = "true""#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
     let cfg = config::load("release.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
     assert!(summary.dry_run);
@@ -164,15 +190,22 @@ check = "true""#);
 
 #[test]
 fn bump_aborts_when_release_tag_exists_elsewhere() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("tag-conflict");
-    write_fixture(&guard, r#"[preflight]
-check = "true""#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
     let fixture = guard.fixture();
     fixture.write("extra.txt", "x");
     run_git_ok(&fixture.dir, &["add", "-A"]);
     run_git_ok(&fixture.dir, &["commit", "-m", "second", "-q"]);
-    let first = String::from_utf8_lossy(&run_git(&fixture.dir, &["rev-list", "--max-parents=0", "HEAD"]).stdout).trim().to_string();
+    let first = String::from_utf8_lossy(&run_git(&fixture.dir, &["rev-list", "--max-parents=0", "HEAD"]).stdout)
+        .trim()
+        .to_string();
     run_git_ok(&fixture.dir, &["tag", "v1.3.0", &first]);
     let cfg = config::load("release.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
@@ -184,13 +217,21 @@ check = "true""#);
 
 #[test]
 fn bump_aborts_when_preflight_times_out() {
-    if !git_available() { return; }
+    if !git_available() {
+        return;
+    }
     let guard = FixtureGuard::new("preflight-timeout");
-    write_fixture(&guard, r#"[preflight]
-check = { command = "sleep 30", timeout = 2 }"#);
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = { command = "sleep 30", timeout = 2 }"#,
+    );
     let cfg = config::load("release.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
-    assert!(err.to_string().contains("timed out"), "expected timeout error, got {err}");
+    assert!(
+        err.to_string().contains("timed out"),
+        "expected timeout error, got {err}"
+    );
     assert_versions_at_123(guard.fixture());
     assert_eq!(commit_count(guard.fixture()), 1);
     assert!(!tag_exists(guard.fixture(), "v1.3.0"));

@@ -184,11 +184,18 @@ pub fn tag_name(prefix: &str, version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn tmp_id(prefix: &str) -> String {
+        let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("{}-{}-{}", prefix, std::process::id(), n)
+    }
+
     use super::*;
     use std::fs;
 
     fn tmp_repo() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("cutver-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(tmp_id("cutver-git"));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         for a in [

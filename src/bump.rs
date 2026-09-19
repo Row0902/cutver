@@ -87,13 +87,20 @@ pub(crate) struct Change {
 
 #[cfg(test)]
 mod tests {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn tmp_id(prefix: &str) -> String {
+        let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("{}-{}-{}", prefix, std::process::id(), n)
+    }
+
     use super::*;
     use crate::config;
     use crate::semver_bump::Bump;
     use std::fs;
 
     fn tmp(prefix: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("{}-{}", prefix, std::process::id()));
+        let dir = std::env::temp_dir().join(tmp_id(prefix));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

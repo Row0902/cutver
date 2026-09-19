@@ -264,6 +264,13 @@ fn require<T>(opt: Option<&T>, m: &Manifest, field: &str) -> Result<(), ConfigEr
 
 #[cfg(test)]
 mod tests {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn tmp_id(prefix: &str) -> String {
+        let n = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("{}-{}-{}", prefix, std::process::id(), n)
+    }
+
     use super::*;
     fn load_str(s: &str) -> Result<Config, ConfigError> {
         let mut c: Config = toml::from_str(s).map_err(ConfigError::Parse)?;
@@ -338,7 +345,7 @@ d = { command = "echo d" }
         assert!(load_str(&manifest("cargo-package", "[preflight]\ndefault_timeout = -1\n")).is_err());
     }
     fn tmp(p: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("{}-{}", p, std::process::id()));
+        let d = std::env::temp_dir().join(tmp_id(p));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
