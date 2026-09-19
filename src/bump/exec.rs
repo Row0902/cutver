@@ -28,6 +28,7 @@ pub fn run(
 
     let (source_entry, _editor, current) = current_source(config)?;
     let bump_level = bump_kind.into();
+    let mut auto_commits = None;
     let bump_semver = match bump_level {
         BumpLevel::Patch => Bump::Patch,
         BumpLevel::Minor => Bump::Minor,
@@ -35,7 +36,8 @@ pub fn run(
         BumpLevel::Auto => {
             let tag = git::latest_tag(repo, Some(&config.git.tag_prefix))?;
             let commits = git::commits_since(repo, tag.as_deref())?;
-            let (deduced, _parsed) = conventional::parse_and_deduce_bump(&commits);
+            let (deduced, parsed) = conventional::parse_and_deduce_bump(&commits);
+            auto_commits = Some(parsed);
             deduced
         }
     };
@@ -70,9 +72,38 @@ pub fn run(
 
     let original_changelog = if let Some(cl_path) = &config.changelog.path {
         let original = if !dry_run { read(cl_path).ok() } else { None };
-        if !dry_run && let Err(e) = changelog::update(cl_path, &tag, &config.changelog.entry_template) {
-            rollback(&computed, &paths_to_stage, None);
-            return Err(Error::Changelog(e));
+        if !dry_run {
+            let update_res = if config.changelog.mode == "template" {
+                changelog::update(cl_path, &tag, &config.changelog.entry_template)
+            } else {
+                let commits = match auto_commits {
+                    Some(parsed) => parsed,
+                    None => {
+                        let latest_tag = match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                rollback(&computed, &paths_to_stage, None);
+                                return Err(Error::Git(e));
+                            }
+                        };
+                        let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                rollback(&computed, &paths_to_stage, None);
+                                return Err(Error::Git(e));
+                            }
+                        };
+                        let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
+                        parsed
+                    }
+                };
+                let body = changelog::render_body(&config.changelog, &commits);
+                changelog::update(cl_path, &tag, &body)
+            };
+            if let Err(e) = update_res {
+                rollback(&computed, &paths_to_stage, None);
+                return Err(Error::Changelog(e));
+            }
         }
         paths_to_stage.push(cl_path.clone());
         original.map(|orig| (cl_path.clone(), orig))
