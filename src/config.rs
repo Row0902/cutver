@@ -146,7 +146,8 @@ pub fn load(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
     let (preflight, default_timeout) = parse_preflight(&text)?;
     config.preflight = preflight;
     config.preflight_default_timeout = default_timeout;
-    config.root_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    config.root_dir = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     config.version.current_source = resolve(&config.root_dir, &config.version.current_source);
     for m in &mut config.manifest {
         m.path = resolve(&config.root_dir, &m.path);
@@ -162,17 +163,46 @@ pub fn discover(start_dir: impl AsRef<Path>) -> Result<Config, ConfigError> {
     let start = if start.is_absolute() {
         start.to_path_buf()
     } else {
-        std::env::current_dir()?.join(start)
+        std::env::current_dir().map_err(ConfigError::Read)?.join(start)
     };
+    let start = canonicalize(&start).unwrap_or(start);
     let mut dir = Some(start.as_path());
     while let Some(d) = dir {
         let candidate = d.join("release.toml");
         if candidate.is_file() {
             return load(candidate);
         }
+        if d.join(".git").exists() {
+            break;
+        }
         dir = d.parent();
     }
     Err(ConfigError::NotFound(start.display().to_string()))
+}
+fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let p = fs::canonicalize(path)?;
+    Ok(strip_verbatim_prefix(p))
+}
+
+pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let s = match path.to_str() {
+        Some(s) => s,
+        None => return path,
+    };
+    if s.len() >= 8 && s[..8].eq_ignore_ascii_case(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", &s[8..]));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 2
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes.len() == 2 || bytes[2] == b'\\' || bytes[2] == b'/')
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path
 }
 fn resolve(root: &Path, path: &str) -> String {
     let p = Path::new(path);
@@ -329,7 +359,7 @@ d = { command = "echo d" }
         let d = std::env::temp_dir().join(tmp_id(p));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
-        d
+        canonicalize(&d).unwrap_or(d)
     }
     fn write(d: &Path, n: &str, t: &str) {
         fs::write(d.join(n), t).unwrap();
@@ -374,5 +404,136 @@ d = { command = "echo d" }
         let c = discover(&s).unwrap();
         assert_eq!(c.root_dir, d);
         assert_eq!(c.version.current_source, d.join("a").to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn discover_stops_at_git_boundary() {
+        let parent = tmp("cutver-git-bound-parent");
+        write(
+            &parent,
+            "release.toml",
+            "[version]\ncurrent_source = \"a\"\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"\n",
+        );
+        write(&parent, "a", "");
+
+        let repo = parent.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let sub = repo.join("sub").join("nested");
+        fs::create_dir_all(&sub).unwrap();
+
+        // When starting from sub inside a git repo that lacks release.toml,
+        // discovery must stop at repo/.git and NOT find parent/release.toml.
+        let err = discover(&sub).unwrap_err();
+        assert!(matches!(err, ConfigError::NotFound(_)));
+
+        // When starting directly at the repo root without release.toml
+        let err = discover(&repo).unwrap_err();
+        assert!(matches!(err, ConfigError::NotFound(_)));
+    }
+
+    #[test]
+    fn discover_stops_at_git_file_boundary() {
+        let parent = tmp("cutver-git-file-bound-parent");
+        write(
+            &parent,
+            "release.toml",
+            "[version]\ncurrent_source = \"a\"\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"\n",
+        );
+        write(&parent, "a", "");
+
+        let repo = parent.join("worktree");
+        fs::create_dir_all(&repo).unwrap();
+        write(&repo, ".git", "gitdir: /path/to/gitdir");
+        let sub = repo.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+
+        let err = discover(&sub).unwrap_err();
+        assert!(matches!(err, ConfigError::NotFound(_)));
+    }
+
+    #[test]
+    fn discover_from_subdirectory_finds_release_toml() {
+        let repo = tmp("cutver-discover-sub");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        write(
+            &repo,
+            "release.toml",
+            "[version]\ncurrent_source = \"a\"\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"\n",
+        );
+        write(&repo, "a", "");
+
+        let deep = repo.join("src").join("nested").join("deep");
+        fs::create_dir_all(&deep).unwrap();
+
+        let c = discover(&deep).unwrap();
+        assert_eq!(c.root_dir, repo);
+        assert_eq!(c.version.current_source, repo.join("a").to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn strip_verbatim_windows_prefixes() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\Users\foo\project")),
+            PathBuf::from(r"C:\Users\foo\project")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\c:\Users\foo\project")),
+            PathBuf::from(r"c:\Users\foo\project")
+        );
+        assert_eq!(strip_verbatim_prefix(PathBuf::from(r"\\?\C:")), PathBuf::from("C:"));
+        assert_eq!(strip_verbatim_prefix(PathBuf::from(r"\\?\C:\")), PathBuf::from(r"C:\"));
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\path")),
+            PathBuf::from(r"\\server\share\path")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\unc\server\share\path")),
+            PathBuf::from(r"\\server\share\path")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from("/unix/absolute/path")),
+            PathBuf::from("/unix/absolute/path")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\Volume{b75e2c83-0000-0000-0000-602200000000}\foo")),
+            PathBuf::from(r"\\?\Volume{b75e2c83-0000-0000-0000-602200000000}\foo")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonicalize_symlinked_root() {
+        let repo = tmp("cutver-symlink-target");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        write(
+            &repo,
+            "release.toml",
+            "[version]\ncurrent_source = \"a\"\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"\n",
+        );
+        write(&repo, "a", "");
+
+        let symlink_dir = std::env::temp_dir().join(tmp_id("cutver-symlink-src"));
+        let _ = fs::remove_file(&symlink_dir);
+        let _ = fs::remove_dir_all(&symlink_dir);
+        std::os::unix::fs::symlink(&repo, &symlink_dir).unwrap();
+
+        let c = load(symlink_dir.join("release.toml")).unwrap();
+        assert_eq!(c.root_dir, repo);
+
+        let c = discover(&symlink_dir).unwrap();
+        assert_eq!(c.root_dir, repo);
+
+        let sub = repo.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let symlink_sub = std::env::temp_dir().join(tmp_id("cutver-symlink-sub"));
+        let _ = fs::remove_file(&symlink_sub);
+        let _ = fs::remove_dir_all(&symlink_sub);
+        std::os::unix::fs::symlink(&sub, &symlink_sub).unwrap();
+
+        let c = discover(&symlink_sub).unwrap();
+        assert_eq!(c.root_dir, repo);
+
+        let _ = fs::remove_file(&symlink_dir);
+        let _ = fs::remove_file(&symlink_sub);
     }
 }

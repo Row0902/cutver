@@ -324,3 +324,56 @@ check = "touch .git/index.lock""#,
     assert_eq!(commit_count(fixture), 1);
     assert!(!tag_exists(fixture, "v1.3.0"));
 }
+
+#[test]
+fn discover_stops_at_git_boundary_without_release_toml() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("boundary-stop");
+    let fixture = guard.fixture();
+    fixture.write(
+        "release.toml",
+        &base_release_toml(
+            r#"[preflight]
+check = "true""#,
+        ),
+    );
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+
+    let inner_repo = fixture.dir.join("inner_repo");
+    std::fs::create_dir_all(&inner_repo).unwrap();
+    run_git_ok(&inner_repo, &["init"]);
+    let sub = inner_repo.join("src").join("nested");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let err = config::discover(&sub).unwrap_err();
+    assert!(
+        matches!(err, config::ConfigError::NotFound(_)),
+        "expected NotFound error stopping at .git boundary, got {err:?}"
+    );
+}
+
+#[test]
+fn discover_from_deep_subdirectory_finds_release_toml() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("deep-subdir-discover");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    let deep = fixture.dir.join("nested").join("deep").join("child");
+    std::fs::create_dir_all(&deep).unwrap();
+    let cfg = config::discover(&deep).unwrap();
+    let expected_root = std::fs::canonicalize(&fixture.dir).unwrap();
+    assert_eq!(cfg.root_dir, expected_root);
+}
