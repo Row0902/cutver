@@ -230,16 +230,14 @@ tests = "cargo test"
     #[test]
     fn config_defaults_and_preflight_order() {
         let dir = temp_dir("cutver-config-defaults");
-        let a = dir.join("a").to_string_lossy().to_string();
         write(
             &dir,
             "release.toml",
-            &format!(
-                "[version]\ncurrent_source = \"{a}\"\n[[manifest]]\npath = \"{a}\"\nkind = \"cargo-package\"\n[preflight]\ntests = \"cargo test\"\nz = \"z\"\na = \"a\"\nm = \"m\"\n[changelog]\npath = \"CHANGELOG.md\"\n"
-            ),
+            "[version]\ncurrent_source = \"a\"\n[[manifest]]\npath = \"a\"\nkind = \"cargo-package\"\n[preflight]\ntests = \"cargo test\"\nz = \"z\"\na = \"a\"\nm = \"m\"\n[changelog]\npath = \"CHANGELOG.md\"\n",
         );
+        write(&dir, "a", "");
         let cfg = config::load(dir.join("release.toml")).unwrap();
-        assert_eq!(cfg.version.current_source, a);
+        assert_eq!(cfg.version.current_source, dir.join("a").to_string_lossy().to_string());
         assert_eq!(
             (cfg.manifest.len(), cfg.preflight.len(), cfg.git.tag_prefix.as_str()),
             (1, 4, "v")
