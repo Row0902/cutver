@@ -125,7 +125,12 @@ fn default_require_clean_tree() -> bool {
 }
 
 pub fn load(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
-    let path = path.as_ref().canonicalize().map_err(ConfigError::Read)?;
+    let raw = path.as_ref();
+    let path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        std::env::current_dir().map_err(ConfigError::Read)?.join(raw)
+    };
     let text = fs::read_to_string(&path)?;
     let mut config: Config = toml::from_str(&text)?;
     let (preflight, default_timeout) = parse_preflight(&text)?;
@@ -371,11 +376,11 @@ d = { command = "echo d" }
         );
 
         let d = tmp("cutver-cfg-abs");
-        let a = d.join("a").to_string_lossy().to_string();
+        let a = d.join("a").to_string_lossy().replace('\\', "/");
         write(
             &d,
             "release.toml",
-            &format!("[version]\ncurrent_source = \"{a}\"\n[[manifest]]\npath = \"{a}\"\nkind = \"cargo-package\"\n"),
+            &format!("[version]\ncurrent_source = '{a}'\n[[manifest]]\npath = '{a}'\nkind = \"cargo-package\"\n"),
         );
         write(&d, "a", "");
         let c = load(d.join("release.toml")).unwrap();

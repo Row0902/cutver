@@ -139,18 +139,14 @@ mod tests {
         write(
             &dir,
             "release.toml",
-            &format!(
-                r#"
+            r#"
 [version]
-current_source = "{}"
+current_source = "package.json"
 [[manifest]]
-path = "{}"
+path = "package.json"
 kind = "json"
 field = "version"
 "#,
-                dir.join("package.json").to_string_lossy(),
-                dir.join("package.json").to_string_lossy()
-            ),
         );
         let args =
             Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
@@ -174,22 +170,17 @@ field = "version"
         write(
             &dir,
             "release.toml",
-            &format!(
-                r#"
+            r#"
 [version]
-current_source = "{}"
+current_source = "package.json"
 [[manifest]]
-path = "{}"
+path = "package.json"
 kind = "json"
 field = "version"
 [[manifest]]
-path = "{}"
+path = "Cargo.toml"
 kind = "cargo-package"
 "#,
-                dir.join("package.json").to_string_lossy(),
-                dir.join("package.json").to_string_lossy(),
-                dir.join("Cargo.toml").to_string_lossy()
-            ),
         );
         let args =
             Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
@@ -204,26 +195,21 @@ kind = "cargo-package"
         write(
             &dir,
             "release.toml",
-            &format!(
-                r#"
+            r#"
 [version]
-current_source = "{}"
+current_source = "package.json"
 [[manifest]]
-path = "{}"
+path = "package.json"
 kind = "json"
 field = "version"
 [[manifest]]
-path = "{}"
+path = "Cargo.toml"
 kind = "cargo-package"
 [git]
 require_clean_tree = false
 [preflight]
 tests = "cargo test"
 "#,
-                dir.join("package.json").to_string_lossy(),
-                dir.join("package.json").to_string_lossy(),
-                dir.join("Cargo.toml").to_string_lossy()
-            ),
         );
         let cargo_before = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         let args = Cli::try_parse_from([

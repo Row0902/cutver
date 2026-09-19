@@ -111,13 +111,11 @@ mod tests {
     }
 
     fn load(dir: &std::path::Path, source: &str, extra: &str) -> config::Config {
-        let pkg = dir.join(source).to_string_lossy().to_string();
-        let cargo = dir.join("Cargo.toml").to_string_lossy().to_string();
         write(
             dir,
             "release.toml",
             &format!(
-                "[version]\ncurrent_source = \"{pkg}\"\n\n[[manifest]]\npath = \"{pkg}\"\nkind = \"json\"\nfield = \"version\"\n\n[[manifest]]\npath = \"{cargo}\"\nkind = \"cargo-package\"\n\n{extra}"
+                "[version]\ncurrent_source = \"{source}\"\n\n[[manifest]]\npath = \"{source}\"\nkind = \"json\"\nfield = \"version\"\n\n[[manifest]]\npath = \"Cargo.toml\"\nkind = \"cargo-package\"\n\n{extra}"
             ),
         );
         config::load(dir.join("release.toml")).unwrap()
