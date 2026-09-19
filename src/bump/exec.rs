@@ -140,6 +140,9 @@ pub fn run(
             };
             for f in modified {
                 let rel_f = Path::new(&f);
+                if !is_known_lockfile(rel_f) {
+                    continue;
+                }
                 let abs_f = repo.join(rel_f);
                 let already_staged = paths_to_stage.iter().any(|p| {
                     let p_path = Path::new(p);
@@ -365,4 +368,57 @@ fn read(path: impl AsRef<Path>) -> Result<String, Error> {
         path: path.display().to_string(),
         source: e,
     })
+}
+
+const KNOWN_LOCKFILES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "gradle.lockfile",
+    "poetry.lock",
+    "Pipfile.lock",
+    "composer.lock",
+];
+
+fn is_known_lockfile(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| KNOWN_LOCKFILES.contains(&name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_known_lockfiles_matched() {
+        for lockfile in KNOWN_LOCKFILES {
+            assert!(is_known_lockfile(Path::new(lockfile)));
+            assert!(is_known_lockfile(Path::new("subdir").join(lockfile)));
+            assert!(is_known_lockfile(Path::new("deep/nested/path").join(lockfile)));
+        }
+    }
+
+    #[test]
+    fn test_arbitrary_files_not_matched() {
+        let non_lockfiles = [
+            "unrelated.txt",
+            "Cargo.toml",
+            "package.json",
+            "release.toml",
+            "cutver.toml",
+            "Cargo.lock.backup",
+            "not-Cargo.lock",
+            "lockfile",
+            "gradle.lock",
+            "poetry.lock.bak",
+            "",
+        ];
+        for f in non_lockfiles {
+            assert!(!is_known_lockfile(Path::new(f)));
+        }
+    }
 }

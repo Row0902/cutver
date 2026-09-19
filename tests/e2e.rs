@@ -917,6 +917,90 @@ post_bump = "echo \"lockfile-version-1.3.0\" > Cargo.lock"
 }
 
 #[test]
+fn post_bump_restricts_staging_to_known_lockfiles_and_leaves_arbitrary_files_unstaged() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("post-bump-lockfile-only");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+
+[hooks]
+post_bump = "echo \"lockfile-version-1.3.0\" > Cargo.lock && echo \"arbitrary-modification\" > unrelated.txt"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("Cargo.lock", "lockfile-version-1.2.3\n");
+    fixture.write("unrelated.txt", "unrelated-initial\n");
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+
+    // Both files were modified by post_bump hook
+    assert_eq!(fixture.read("Cargo.lock").trim(), "lockfile-version-1.3.0");
+    assert_eq!(fixture.read("unrelated.txt").trim(), "arbitrary-modification");
+
+    // ONLY Cargo.lock was staged and committed; unrelated.txt was not committed
+    let commit_files = head_commit_files(fixture);
+    assert!(
+        commit_files.contains(&"Cargo.lock".to_string()),
+        "commit_files should contain Cargo.lock: {commit_files:?}"
+    );
+    assert!(
+        !commit_files.contains(&"unrelated.txt".to_string()),
+        "commit_files should NOT contain unrelated.txt: {commit_files:?}"
+    );
+
+    // unrelated.txt remains unstaged in working tree
+    let status_out = run_git(&fixture.dir, &["status", "--porcelain"]);
+    let status_str = String::from_utf8_lossy(&status_out.stdout);
+    assert!(
+        status_str.contains("unrelated.txt"),
+        "git status should report unrelated.txt: {status_str}"
+    );
+    assert!(
+        status_str.lines().any(|l| l.starts_with(" M unrelated.txt")),
+        "unrelated.txt must be unstaged (not in index): {status_str}"
+    );
+
+    // No files should remain staged in the index
+    let diff_cached = run_git(&fixture.dir, &["diff", "--cached", "--name-only"]);
+    assert!(
+        String::from_utf8_lossy(&diff_cached.stdout).trim().is_empty(),
+        "no files should remain staged in the index"
+    );
+
+    // Working tree diff should only show unrelated.txt
+    let diff_unstaged = run_git(&fixture.dir, &["diff", "--name-only"]);
+    let diff_unstaged_str = String::from_utf8_lossy(&diff_unstaged.stdout);
+    let unstaged_files: Vec<&str> = diff_unstaged_str
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert_eq!(unstaged_files, vec!["unrelated.txt"]);
+}
+
+#[test]
 fn post_bump_failure_triggers_rollback_and_aborts() {
     assert!(git_available());
     let guard = FixtureGuard::new("post-bump-fail");
