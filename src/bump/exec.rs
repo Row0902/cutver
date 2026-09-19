@@ -29,7 +29,7 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     // HEAD today sits behind the release commit created minutes later. Fail
     // closed with an actionable message; the maintainer resolves the tag
     // (delete it or bump deliberately) before re-running.
-    if !dry_run && git::tag_exists(repo, &tag)? {
+    if git::tag_exists(repo, &tag)? {
         let at = git::rev_parse(repo, &format!("{tag}^{{commit}}"))?;
         return Err(Error::TagExists {
             tag: tag.clone(),
@@ -57,11 +57,20 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
         paths_to_stage.push(cl_path.clone());
     }
 
-    git::stage(repo, &paths_to_stage, dry_run).map_err(Error::Stage)?;
-    git::commit(repo, &commit_message, dry_run).map_err(Error::Commit)?;
-    let tag_report = git::tag(repo, &tag, &next.to_string(), dry_run).map_err(|e| Error::Tag {
-        tag: tag.clone(),
-        source: e,
+    git::stage(repo, &paths_to_stage, dry_run).map_err(|e| {
+        rollback(&computed, &paths_to_stage);
+        Error::Stage(e)
+    })?;
+    git::commit(repo, &commit_message, dry_run).map_err(|e| {
+        rollback(&computed, &paths_to_stage);
+        Error::Commit(e)
+    })?;
+    let tag_report = git::tag(repo, &tag, &next.to_string(), dry_run).map_err(|e| {
+        rollback(&computed, &paths_to_stage);
+        Error::Tag {
+            tag: tag.clone(),
+            source: e,
+        }
     })?;
     let tag_skipped = tag_report.is_some() && !dry_run;
 

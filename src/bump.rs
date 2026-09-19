@@ -98,6 +98,7 @@ mod tests {
     use crate::config;
     use crate::semver_bump::Bump;
     use std::fs;
+    use std::path::Path;
 
     fn tmp(prefix: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(tmp_id(prefix));
@@ -142,9 +143,27 @@ mod tests {
         assert_eq!(drifts[0].actual, "1.0.0");
     }
 
+    fn init_git(dir: &Path) {
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .expect("failed to execute git");
+            assert!(status.success(), "git command failed: {:?}", args);
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test User"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["config", "tag.gpgsign", "false"]);
+    }
+
     #[test]
     fn dry_run_leaves_files_unchanged() {
         let dir = tmp("cutver-bump-dry");
+        init_git(&dir);
         write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
         write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
         let summary = run(

@@ -242,3 +242,85 @@ check = { command = "sleep 30", timeout = 2 }"#,
     assert_eq!(commit_count(guard.fixture()), 1);
     assert!(!tag_exists(guard.fixture(), "v1.3.0"));
 }
+
+#[test]
+fn bump_dry_run_aborts_when_release_tag_exists() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("dry-run-tag-conflict");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(&fixture.dir, &["tag", "v1.3.0", "HEAD"]);
+    let cfg = config::load("release.toml").unwrap();
+    let err = bump_run(&cfg, Bump::Minor, true, &[]).unwrap_err();
+    assert!(
+        matches!(err, cutver::bump::Error::TagExists { .. }),
+        "expected TagExists error, got {err:?}"
+    );
+    assert!(err.to_string().contains("v1.3.0"));
+    assert_versions_at_123(fixture);
+    assert_eq!(commit_count(fixture), 1);
+}
+
+#[test]
+fn bump_rolls_back_manifests_when_commit_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("commit-fail-rollback");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+
+    let hook_path = fixture.dir.join(".git/hooks/pre-commit");
+    std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cfg = config::load("release.toml").unwrap();
+    let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
+    assert!(
+        matches!(err, cutver::bump::Error::Commit(_)),
+        "expected Commit error, got {err:?}"
+    );
+    assert_versions_at_123(fixture);
+    assert_eq!(commit_count(fixture), 1);
+    assert!(!tag_exists(fixture, "v1.3.0"));
+}
+
+#[test]
+fn bump_rolls_back_manifests_when_stage_fails() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("stage-fail-rollback");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "touch .git/index.lock""#,
+    );
+    let fixture = guard.fixture();
+    let cfg = config::load("release.toml").unwrap();
+    let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
+    assert!(
+        matches!(err, cutver::bump::Error::Stage(_)),
+        "expected Stage error, got {err:?}"
+    );
+
+    let _ = std::fs::remove_file(fixture.dir.join(".git/index.lock"));
+    assert_versions_at_123(fixture);
+    assert_eq!(commit_count(fixture), 1);
+    assert!(!tag_exists(fixture, "v1.3.0"));
+}
