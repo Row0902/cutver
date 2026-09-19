@@ -49,20 +49,26 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     // rollback restores previously written files to their original content.
     let (touched, mut paths_to_stage) = apply(&computed, &next, dry_run)?;
 
-    if let Some(cl_path) = &config.changelog.path {
+    let original_changelog = if let Some(cl_path) = &config.changelog.path {
+        let original = if !dry_run { read(cl_path).ok() } else { None };
         if !dry_run && let Err(e) = changelog::update(cl_path, &tag, &config.changelog.entry_template) {
-            rollback(&computed, &paths_to_stage);
+            rollback(&computed, &paths_to_stage, None);
             return Err(Error::Changelog(e));
         }
         paths_to_stage.push(cl_path.clone());
-    }
+        original.map(|orig| (cl_path.clone(), orig))
+    } else {
+        None
+    };
 
     git::stage(repo, &paths_to_stage, dry_run).map_err(|e| {
-        rollback(&computed, &paths_to_stage);
+        rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+        unstage(repo);
         Error::Stage(e)
     })?;
     git::commit(repo, &commit_message, dry_run).map_err(|e| {
-        rollback(&computed, &paths_to_stage);
+        rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+        unstage(repo);
         Error::Commit(e)
     })?;
     let tag_report = git::tag(repo, &tag, &next.to_string(), dry_run).map_err(|e| Error::Tag {
@@ -181,13 +187,25 @@ fn apply(computed: &[Change], next: &Version, dry_run: bool) -> Result<(Vec<Touc
     Ok((touched, paths))
 }
 
-fn rollback(computed: &[Change], paths: &[String]) {
+fn rollback(computed: &[Change], paths: &[String], changelog: Option<&(String, String)>) {
     let set: HashSet<&str> = paths.iter().map(|s| s.as_str()).collect();
     for c in computed {
         if set.contains(c.path.as_str()) {
             let _ = atomic::write_atomic(&c.path, &c.original);
         }
     }
+    if let Some((path, orig)) = changelog
+        && set.contains(path.as_str())
+    {
+        let _ = atomic::write_atomic(path, orig);
+    }
+}
+
+fn unstage(repo: &Path) {
+    let _ = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["reset", "HEAD", "--quiet"])
+        .status();
 }
 
 pub fn doctor(config: &Config) -> Result<Vec<Drift>, Error> {

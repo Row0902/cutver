@@ -298,6 +298,12 @@ check = "true""#,
     assert_versions_at_123(fixture);
     assert_eq!(commit_count(fixture), 1);
     assert!(!tag_exists(fixture, "v1.3.0"));
+    let status = run_git(&fixture.dir, &["status", "--porcelain"]);
+    assert!(
+        status.stdout.is_empty(),
+        "expected empty git status --porcelain, got: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
 }
 
 #[test]
