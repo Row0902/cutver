@@ -95,6 +95,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::cli::BumpLevel;
     use crate::config;
     use crate::semver_bump::Bump;
     use std::fs;
@@ -162,6 +163,47 @@ mod tests {
             fs::read_to_string(dir.join("Cargo.toml")).unwrap(),
             "[package]\nversion = \"1.2.3\"\n"
         );
+    }
+
+    #[test]
+    fn dry_run_auto_bump_deduces_from_commits() {
+        let dir = tmp("cutver-bump-dry-auto");
+        crate::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
+        // Create an initial commit and tag it as v1.2.3
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["add", "package.json", "Cargo.toml"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "-m", "chore: initial release", "-q"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["tag", "v1.2.3"])
+            .status()
+            .unwrap();
+        // Add a feat commit after the tag
+        write(&dir, "feature.txt", "feature content");
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["add", "feature.txt"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "-m", "feat: add brilliant feature", "-q"])
+            .status()
+            .unwrap();
+
+        let cfg = load(&dir, "package.json", "[git]\nrequire_clean_tree = false\n");
+        let summary = run(&cfg, BumpLevel::Auto, true, &[]).unwrap();
+        assert_eq!(summary.next.to_string(), "1.3.0");
+        assert!(summary.dry_run);
     }
 
     #[test]

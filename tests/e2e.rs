@@ -4,6 +4,7 @@ mod common;
 
 use common::*;
 use cutver::bump::run as bump_run;
+use cutver::cli::BumpLevel;
 use cutver::config;
 use cutver::semver_bump::Bump;
 use std::time::SystemTime;
@@ -383,4 +384,278 @@ check = "true""#,
     let cfg = config::discover(&deep).unwrap();
     let expected_root = std::fs::canonicalize(&fixture.dir).unwrap();
     assert_eq!(cfg.root_dir, expected_root);
+}
+
+#[test]
+fn bump_minor_with_canonical_cutver_toml_deduction() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("cutver-deduction");
+    let fixture = guard.fixture();
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write(
+        "cutver.toml",
+        r#"[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[[manifest]]
+path = "android/build.gradle.kts"
+kind = "gradle"
+version_name_field = "versionName"
+version_code_field = "versionCode"
+
+[preflight]
+check = "true"
+
+[changelog]
+path = "CHANGELOG.md"
+entry_template = "Maintenance and updates."
+
+[git]
+tag_prefix = "v"
+require_clean_tree = true
+"#,
+    );
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::discover(&fixture.dir).unwrap();
+    assert!(cfg.version.current_source.ends_with("package.json"));
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+    assert_bumped(fixture);
+}
+
+#[test]
+fn discover_prioritizes_cutver_toml_over_release_toml_e2e() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("precedence-e2e");
+    let fixture = guard.fixture();
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    // release.toml uses package.json
+    fixture.write(
+        "release.toml",
+        r#"[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+    );
+    // cutver.toml uses Cargo.toml
+    fixture.write(
+        "cutver.toml",
+        r#"[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+"#,
+    );
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let sub = fixture.dir.join("nested");
+    std::fs::create_dir_all(&sub).unwrap();
+    let cfg = config::discover(&sub).unwrap();
+    assert!(cfg.version.current_source.ends_with("Cargo.toml"));
+}
+
+#[test]
+fn bump_auto_dry_run_with_feat() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-feat-dry");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: add auto bump support"],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, true, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+    assert!(summary.dry_run);
+    assert_versions_at_123(fixture);
+    assert!(!tag_exists(fixture, "v1.3.0"));
+}
+
+#[test]
+fn bump_auto_real_run_with_feat() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-feat-real");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: add auto bump support"],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+    assert!(!summary.dry_run);
+    assert_bumped(fixture);
+    assert!(tag_exists(fixture, "v1.3.0"));
+    assert!(is_annotated_tag(fixture, "v1.3.0"));
+}
+
+#[test]
+fn bump_auto_real_run_with_breaking_exclamation() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-break-excl");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat!: breaking change across system"],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "2.0.0");
+    assert!(!summary.dry_run);
+    assert!(fixture.read("package.json").contains("\"version\": \"2.0.0\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"2.0.0\""));
+    assert!(tag_exists(fixture, "v2.0.0"));
+}
+
+#[test]
+fn bump_auto_real_run_with_breaking_footer() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-break-footer");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(
+        &fixture.dir,
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fix: correct edge case in config\n\nBREAKING CHANGE: drop deprecated release.toml field",
+        ],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "2.0.0");
+    assert!(!summary.dry_run);
+    assert!(fixture.read("package.json").contains("\"version\": \"2.0.0\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"2.0.0\""));
+    assert!(tag_exists(fixture, "v2.0.0"));
+}
+
+#[test]
+fn bump_auto_defaults_to_patch_for_fixes_and_non_conventional() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-patch-fixes");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(&fixture.dir, &["commit", "--allow-empty", "-m", "fix: minor bug fix"]);
+    run_git_ok(&fixture.dir, &["commit", "--allow-empty", "-m", "docs: update readme"]);
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "some non-conventional commit"],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.2.4");
+    assert!(!summary.dry_run);
+    assert!(fixture.read("package.json").contains("\"version\": \"1.2.4\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.4\""));
+    assert!(tag_exists(fixture, "v1.2.4"));
+}
+
+#[test]
+fn bump_auto_respects_previous_tag() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("auto-respect-tag");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    // Prior breaking commit before tagging v1.2.3
+    run_git_ok(
+        &fixture.dir,
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "feat!: breaking change prior to release",
+        ],
+    );
+    run_git_ok(&fixture.dir, &["tag", "v1.2.3"]);
+
+    // Subsequent fix commit after v1.2.3 tag
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "fix: post-release bugfix"],
+    );
+
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    // Because the breaking change occurred before v1.2.3 tag, it only inspects commits since v1.2.3,
+    // deducing a patch bump to 1.2.4 instead of major.
+    assert_eq!(summary.next.to_string(), "1.2.4");
+    assert!(!summary.dry_run);
+    assert!(fixture.read("package.json").contains("\"version\": \"1.2.4\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.4\""));
+    assert!(tag_exists(fixture, "v1.2.4"));
 }

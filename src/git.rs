@@ -182,6 +182,58 @@ pub fn tag_name(prefix: &str, version: &str) -> String {
     format!("{prefix}{version}")
 }
 
+pub fn latest_tag(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Option<String>, Error> {
+    let mut args = vec!["describe", "--tags", "--abbrev=0"];
+    let match_arg;
+    if let Some(prefix) = tag_prefix
+        && !prefix.is_empty()
+    {
+        match_arg = format!("{prefix}*");
+        args.push("--match");
+        args.push(&match_arg);
+    }
+    let output = run_git(&repo, &args)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let tag = String::from_utf8(output.stdout)
+        .map_err(|e| Error::Output {
+            source: io::Error::new(io::ErrorKind::InvalidData, e),
+        })?
+        .trim()
+        .to_string();
+    if tag.is_empty() { Ok(None) } else { Ok(Some(tag)) }
+}
+
+pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<String>, Error> {
+    let range;
+    let mut args = vec!["log"];
+    if let Some(t) = tag {
+        range = format!("{t}..HEAD");
+        args.push(&range);
+    }
+    args.push("--format=%B%x00");
+    let output = run_git(&repo, &args)?;
+    if !output.status.success() {
+        if tag.is_none() {
+            return Ok(Vec::new());
+        }
+        return Err(Error::Status {
+            command: args.join(" "),
+            status: output.status,
+        });
+    }
+    let text = String::from_utf8(output.stdout).map_err(|e| Error::Output {
+        source: io::Error::new(io::ErrorKind::InvalidData, e),
+    })?;
+    let commits = text
+        .split('\0')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    Ok(commits)
+}
+
 pub fn init_test_repo(dir: impl AsRef<std::path::Path>) {
     let dir = dir.as_ref();
     let run = |args: &[&str]| {
@@ -308,5 +360,44 @@ mod tests {
         git(&dir, &["commit", "-am", "c2", "-q"]);
         git(&dir, &["tag", "v1", &first]);
         assert!(tag(&dir, "v1", "1", false).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn latest_tag_and_commits_since() {
+        let dir = tmp_repo();
+        // Initially no tags
+        assert_eq!(latest_tag(&dir, None).unwrap(), None);
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), None);
+
+        // All commits since initial
+        let all_commits = commits_since(&dir, None).unwrap();
+        assert_eq!(all_commits, vec!["i"]);
+
+        // Tag initial commit as v1.0.0
+        git(&dir, &["tag", "v1.0.0"]);
+        assert_eq!(latest_tag(&dir, None).unwrap(), Some("v1.0.0".to_string()));
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), Some("v1.0.0".to_string()));
+        assert_eq!(latest_tag(&dir, Some("release/")).unwrap(), None);
+
+        // No commits since v1.0.0 yet
+        let since_v1 = commits_since(&dir, Some("v1.0.0")).unwrap();
+        assert!(since_v1.is_empty());
+
+        // Add a commit with multiline message
+        fs::write(dir.join("x"), "c2").unwrap();
+        git(
+            &dir,
+            &["commit", "-am", "feat: new feature\n\nDetailed explanation", "-q"],
+        );
+
+        // Add another commit
+        fs::write(dir.join("x"), "c3").unwrap();
+        git(&dir, &["commit", "-am", "fix: small bug", "-q"]);
+
+        let new_commits = commits_since(&dir, Some("v1.0.0")).unwrap();
+        assert_eq!(new_commits.len(), 2);
+        assert_eq!(new_commits[0], "fix: small bug");
+        assert_eq!(new_commits[1], "feat: new feature\n\nDetailed explanation");
     }
 }

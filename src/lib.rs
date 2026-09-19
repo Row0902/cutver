@@ -3,6 +3,7 @@ pub mod bump;
 pub mod changelog;
 pub mod cli;
 pub mod config;
+pub mod conventional;
 pub mod git;
 pub mod manifest;
 pub mod preflight;

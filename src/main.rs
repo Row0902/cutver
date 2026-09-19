@@ -2,7 +2,6 @@ use clap::Parser;
 use cutver::bump::{self, Drift, Summary};
 use cutver::cli::{BumpLevel, Cli, Commands};
 use cutver::config;
-use cutver::semver_bump::Bump;
 use std::process;
 
 fn main() {
@@ -43,12 +42,7 @@ fn run(args: Cli) -> i32 {
 }
 
 fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_preflight: &[String]) -> i32 {
-    let kind = match level {
-        BumpLevel::Patch => Bump::Patch,
-        BumpLevel::Minor => Bump::Minor,
-        BumpLevel::Major => Bump::Major,
-    };
-    match bump::run(config, kind, dry_run, skip_preflight) {
+    match bump::run(config, level, dry_run, skip_preflight) {
         Ok(summary) => {
             print_summary(&summary);
             0
@@ -63,7 +57,13 @@ fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_prefl
 fn run_doctor(config: &config::Config) -> i32 {
     match bump::doctor(config) {
         Ok(drifts) if drifts.is_empty() => {
-            println!("release.toml is valid.");
+            let filename =
+                if config.root_dir.join("release.toml").is_file() && !config.root_dir.join("cutver.toml").is_file() {
+                    "release.toml"
+                } else {
+                    "cutver.toml"
+                };
+            println!("{filename} is valid.");
             println!("  manifests: {}", config.manifest.len());
             println!("  preflight steps: {}", config.preflight.len());
             println!("  current source: {}", config.version.current_source);
@@ -226,6 +226,57 @@ tests = "cargo test"
         .unwrap();
         assert_eq!(run(args), 0);
         assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), cargo_before);
+    }
+
+    #[test]
+    fn bump_auto_dry_run_with_feat() {
+        let dir = temp_dir("cutver-bump-auto-main");
+        cutver::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.2.3"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.2.3\"\n");
+        write(
+            &dir,
+            "release.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+[git]
+require_clean_tree = false
+"#,
+        );
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["add", "."])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "-m", "chore: initial commit", "-q"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "--allow-empty", "-m", "feat: exciting new feature", "-q"])
+            .status()
+            .unwrap();
+
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "bump",
+            "auto",
+            "--dry-run",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 0);
     }
 
     #[test]

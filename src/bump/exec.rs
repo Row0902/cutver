@@ -1,7 +1,9 @@
 use crate::atomic;
 use crate::bump::{Change, Drift, Error, Summary, Touched};
 use crate::changelog;
+use crate::cli::BumpLevel;
 use crate::config::Config;
+use crate::conventional;
 use crate::git;
 use crate::manifest;
 use crate::preflight;
@@ -12,7 +14,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[String]) -> Result<Summary, Error> {
+pub fn run(
+    config: &Config,
+    bump_kind: impl Into<BumpLevel>,
+    dry_run: bool,
+    skip_preflight: &[String],
+) -> Result<Summary, Error> {
     // cutver runs from the project root where release.toml lives; the git
     // repository root is therefore the directory containing release.toml.
     let repo = &config.root_dir;
@@ -20,7 +27,19 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     git::require_branch(repo, config.git.require_branch.as_deref())?;
 
     let (source_entry, _editor, current) = current_source(config)?;
-    let next = semver_bump::bump(&current, bump_kind);
+    let bump_level = bump_kind.into();
+    let bump_semver = match bump_level {
+        BumpLevel::Patch => Bump::Patch,
+        BumpLevel::Minor => Bump::Minor,
+        BumpLevel::Major => Bump::Major,
+        BumpLevel::Auto => {
+            let tag = git::latest_tag(repo, Some(&config.git.tag_prefix))?;
+            let commits = git::commits_since(repo, tag.as_deref())?;
+            let (deduced, _parsed) = conventional::parse_and_deduce_bump(&commits);
+            deduced
+        }
+    };
+    let next = semver_bump::bump(&current, bump_semver);
     let commit_message = git::commit_message(&config.git.commit_message, &next.to_string());
     let tag = git::tag_name(&config.git.tag_prefix, &next.to_string());
 
