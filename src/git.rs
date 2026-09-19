@@ -215,10 +215,17 @@ pub fn push(
 }
 
 pub fn status_files(repo: impl AsRef<Path>) -> Result<Vec<String>, Error> {
-    let text = stdout_text(run_git(&repo, &["status", "--porcelain"])?, "status --porcelain")?;
+    let text = stdout_text(
+        run_git(&repo, &["status", "--porcelain", "-uno"])?,
+        "status --porcelain -uno",
+    )?;
     let mut files = Vec::new();
     for line in text.lines() {
         if line.len() >= 4 {
+            let status_code = &line[..2];
+            if status_code.starts_with('?') || status_code.starts_with('!') {
+                continue;
+            }
             let mut file_path = line[3..].trim();
             if file_path.starts_with('"') && file_path.ends_with('"') && file_path.len() >= 2 {
                 file_path = &file_path[1..file_path.len() - 1];
@@ -512,13 +519,14 @@ mod tests {
 
     #[test]
     #[cfg_attr(not(unix), ignore)]
-    fn status_files_detects_changes() {
+    fn status_files_detects_changes_and_ignores_untracked() {
         let dir = tmp_repo();
         assert!(status_files(&dir).unwrap().is_empty());
         fs::write(dir.join("x"), "modified").unwrap();
         fs::write(dir.join("y.txt"), "untracked").unwrap();
         let files = status_files(&dir).unwrap();
         assert!(files.contains(&"x".to_string()));
-        assert!(files.contains(&"y.txt".to_string()));
+        // Untracked files must NEVER be returned
+        assert!(!files.contains(&"y.txt".to_string()));
     }
 }
