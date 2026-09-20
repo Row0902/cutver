@@ -5,4 +5,4 @@ Goal: Update `.github/workflows/release.yml` so that GitHub releases automatical
 ## Tasks
 - [x] 1. Update `.github/workflows/release.yml` to check out repo, unpack Linux artifact, extract notes with `cutver changelog latest`, and configure `body_path: RELEASE_NOTES.md`
 - [x] 2. Validate workflow syntax and test locally
-- [ ] 3. Submit PR, verify CI, and merge to main
+- [x] 3. Submit PR, verify CI, and merge to main
