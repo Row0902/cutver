@@ -418,10 +418,13 @@ const KNOWN_LOCKFILES: &[&str] = &[
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lockb",
+    "bun.lock",
     "gradle.lockfile",
     "poetry.lock",
     "Pipfile.lock",
     "composer.lock",
+    "uv.lock",
+    "pdm.lock",
 ];
 
 fn is_known_lockfile(path: impl AsRef<Path>) -> bool {
@@ -575,6 +578,12 @@ mod tests {
             assert!(is_known_lockfile(Path::new("subdir").join(lockfile)));
             assert!(is_known_lockfile(Path::new("deep/nested/path").join(lockfile)));
         }
+
+        assert!(is_known_lockfile(Path::new("bun.lock")));
+        assert!(is_known_lockfile(Path::new("uv.lock")));
+        assert!(is_known_lockfile(Path::new("pdm.lock")));
+        assert!(is_known_lockfile(Path::new("backend/uv.lock")));
+        assert!(is_known_lockfile(Path::new("frontend/bun.lock")));
     }
 
     #[test]

@@ -1853,3 +1853,113 @@ field = "version"
     );
     assert!(stderr.contains("1.1.0"), "stderr does not contain '1.1.0': {stderr}");
 }
+
+#[test]
+fn bump_pyproject_pep621_happy_path() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("bump-pyproject-pep621");
+    let fixture = guard.fixture();
+    let pyproject = r#"[project]
+name = "my-app"
+version = "1.0.0" # current version
+description = "Sample app"
+"#;
+    let cutver_toml = r#"[[manifest]]
+path = "pyproject.toml"
+kind = "pyproject"
+"#;
+    fixture.write("pyproject.toml", pyproject);
+    fixture.write("cutver.toml", cutver_toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.1.0");
+    assert!(
+        fixture
+            .read("pyproject.toml")
+            .contains("version = \"1.1.0\" # current version")
+    );
+    assert!(tag_exists(fixture, "v1.1.0"));
+}
+
+#[test]
+fn bump_pyproject_poetry_happy_path() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("bump-pyproject-poetry");
+    let fixture = guard.fixture();
+    let pyproject = r#"[tool.poetry]
+name = "my-poetry-app"
+version = "2.0.0" # poetry version
+description = "Poetry app"
+"#;
+    let cutver_toml = r#"[[manifest]]
+path = "pyproject.toml"
+kind = "pyproject"
+"#;
+    fixture.write("pyproject.toml", pyproject);
+    fixture.write("cutver.toml", cutver_toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Patch, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "2.0.1");
+    assert!(
+        fixture
+            .read("pyproject.toml")
+            .contains("version = \"2.0.1\" # poetry version")
+    );
+}
+
+#[test]
+fn post_bump_stages_modern_lockfiles() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("post-bump-modern-lockfiles");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[hooks]
+post_bump = "echo bun-lock >> bun.lock && echo uv-lock >> uv.lock && echo pdm-lock >> pdm.lock"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("cutver.toml", toml);
+    fixture.write("bun.lock", "bun-lock-initial\n");
+    fixture.write("uv.lock", "uv-lock-initial\n");
+    fixture.write("pdm.lock", "pdm-lock-initial\n");
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let _summary = bump_run(&cfg, Bump::Patch, false, &[]).unwrap();
+
+    let commit_files = head_commit_files(fixture);
+    assert!(
+        commit_files.contains(&"bun.lock".to_string()),
+        "commit_files should contain bun.lock: {commit_files:?}"
+    );
+    assert!(
+        commit_files.contains(&"uv.lock".to_string()),
+        "commit_files should contain uv.lock: {commit_files:?}"
+    );
+    assert!(
+        commit_files.contains(&"pdm.lock".to_string()),
+        "commit_files should contain pdm.lock: {commit_files:?}"
+    );
+}
