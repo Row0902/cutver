@@ -13,6 +13,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::process::Child;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub fn run(
     config: &Config,
@@ -184,22 +187,7 @@ pub fn run(
     for cmd in &config.publish.commands {
         let formatted = format_command(cmd, &next.to_string(), &tag);
         if !dry_run {
-            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
-            let status = std::process::Command::new(shell)
-                .arg(flag)
-                .arg(&formatted)
-                .current_dir(&config.root_dir)
-                .status()
-                .map_err(|e| Error::PublishCommandSpawn {
-                    command: formatted.clone(),
-                    source: e,
-                })?;
-            if !status.success() {
-                return Err(Error::PublishCommandFailed {
-                    command: formatted,
-                    status,
-                });
-            }
+            run_publish_command(&formatted, &config.root_dir, config.publish.default_timeout)?;
         }
         publish_commands.push(formatted);
     }
@@ -389,9 +377,142 @@ fn is_known_lockfile(path: impl AsRef<Path>) -> bool {
         .is_some_and(|name| KNOWN_LOCKFILES.contains(&name))
 }
 
+fn run_publish_command(command: &str, current_dir: &Path, timeout_secs: Option<u64>) -> Result<(), Error> {
+    let timeout = timeout_secs.map(Duration::from_secs);
+    let start = Instant::now();
+    let mut child = spawn_command(command, current_dir).map_err(|e| Error::PublishCommandSpawn {
+        command: command.to_string(),
+        source: e,
+    })?;
+
+    loop {
+        match child.try_wait().map_err(|e| Error::PublishCommandSpawn {
+            command: command.to_string(),
+            source: e,
+        })? {
+            Some(status) => {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(Error::PublishCommandFailed {
+                    command: command.to_string(),
+                    status,
+                });
+            }
+            None => {
+                if let Some(limit) = timeout {
+                    let elapsed = start.elapsed();
+                    if elapsed >= limit {
+                        kill_tree(&mut child);
+                        return Err(Error::PublishCommandTimeout {
+                            command: command.to_string(),
+                            timeout: limit.as_secs(),
+                            elapsed_ms: elapsed.as_millis(),
+                        });
+                    }
+                    thread::sleep(POLL.min(limit - elapsed));
+                } else {
+                    thread::sleep(POLL);
+                }
+            }
+        }
+    }
+}
+
+const POLL: Duration = Duration::from_millis(50);
+
+fn spawn_command(command: &str, current_dir: &Path) -> Result<Child, io::Error> {
+    let (shell, flag) = shell();
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            std::process::Command::new(shell)
+                .arg(flag)
+                .arg(command)
+                .current_dir(current_dir)
+                .pre_exec(|| {
+                    let _ = setpgid(0, 0);
+                    Ok(())
+                })
+                .spawn()
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        std::process::Command::new(shell)
+            .arg(flag)
+            .arg(command)
+            .current_dir(current_dir)
+            .spawn()
+    }
+}
+
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        let _ = killpg(child.id() as i32, SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", pid.as_str()])
+            .output();
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+const SIGKILL: i32 = 9;
+#[cfg(unix)]
+unsafe extern "C" {
+    fn setpgid(pid: i32, pgid: i32) -> i32;
+    fn killpg(pgrp: i32, sig: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn shell() -> (&'static str, &'static str) {
+    ("sh", "-c")
+}
+#[cfg(windows)]
+fn shell() -> (&'static str, &'static str) {
+    ("cmd", "/C")
+}
+#[cfg(not(any(unix, windows)))]
+fn shell() -> (&'static str, &'static str) {
+    ("sh", "-c")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_run_publish_command_times_out() {
+        let temp = std::env::temp_dir();
+        let start = Instant::now();
+        let res = run_publish_command("sleep 5", &temp, Some(1));
+        assert!(start.elapsed() < Duration::from_secs(3));
+        match res {
+            Err(Error::PublishCommandTimeout {
+                command,
+                timeout,
+                elapsed_ms,
+            }) => {
+                assert_eq!(command, "sleep 5");
+                assert_eq!(timeout, 1);
+                assert!(elapsed_ms >= 1000);
+            }
+            other => panic!("expected PublishCommandTimeout, got {:?}", other),
+        }
+    }
 
     #[test]
     fn test_known_lockfiles_matched() {
