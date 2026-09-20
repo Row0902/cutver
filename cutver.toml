@@ -27,3 +27,4 @@ post_bump = "cargo check --workspace"
 [publish]
 push = true
 commands = ["cargo publish"]
+default_timeout = 300
