@@ -23,6 +23,8 @@ pub enum Error {
     },
     #[error("no release section found in changelog '{path}'")]
     NoReleaseSection { path: String },
+    #[error("version '{version}' not found in changelog '{path}'")]
+    VersionNotFound { version: String, path: String },
 }
 
 /// Prepend a new keep-a-changelog section for `version` to `path`.
@@ -199,6 +201,91 @@ pub fn read_latest(path: impl AsRef<Path>, include_header: bool) -> Result<Strin
     })?;
 
     extract_latest(&content, include_header).ok_or(Error::NoReleaseSection { path: path_str })
+}
+
+/// Extract release notes for a specific `target_version` from changelog `content`.
+///
+/// Normalizes `target_version` and heading versions by stripping optional leading `'v'` or `'V'`.
+/// Scans `content` line-by-line looking for markdown headings starting with `## `.
+/// Collects subsequent lines until the next line starting with `## ` or EOF.
+///
+/// If `include_header` is false, excludes the header line and trims leading and trailing whitespace from the body.
+/// If `include_header` is true, includes the header line and trims trailing whitespace.
+/// Returns `None` if no matching release heading is found.
+pub fn extract_version(content: &str, target_version: &str, include_header: bool) -> Option<String> {
+    let target_norm = normalize_version(target_version);
+    if target_norm.is_empty() {
+        return None;
+    }
+
+    let mut in_target = false;
+    let mut collected = Vec::new();
+
+    for line in content.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if in_target {
+                break;
+            }
+
+            if extract_heading_version(heading).is_some_and(|heading_ver| normalize_version(heading_ver) == target_norm)
+            {
+                in_target = true;
+                if include_header {
+                    collected.push(line);
+                }
+            }
+        } else if in_target {
+            collected.push(line);
+        }
+    }
+
+    if !in_target {
+        return None;
+    }
+
+    let joined = collected.join("\n");
+    if include_header {
+        Some(joined.trim_end().to_string())
+    } else {
+        Some(joined.trim().to_string())
+    }
+}
+
+/// Read a changelog file and extract release notes for a specific `target_version`.
+///
+/// Returns `Ok(String)` with the release notes or `Err(Error::VersionNotFound)` if the version is not present.
+pub fn read_version(path: impl AsRef<Path>, target_version: &str, include_header: bool) -> Result<String, Error> {
+    let path = path.as_ref();
+    let path_str = path.display().to_string();
+    let content = fs::read_to_string(path).map_err(|e| Error::Read {
+        path: path_str.clone(),
+        source: e,
+    })?;
+
+    extract_version(&content, target_version, include_header).ok_or_else(|| Error::VersionNotFound {
+        version: target_version.to_string(),
+        path: path_str,
+    })
+}
+
+fn normalize_version(v: &str) -> &str {
+    let trimmed = v.trim();
+    if let Some(rest) = trimmed.strip_prefix(['v', 'V']) {
+        rest
+    } else {
+        trimmed
+    }
+}
+
+fn extract_heading_version(heading: &str) -> Option<&str> {
+    let heading = heading.trim_start();
+    if heading.starts_with('[') {
+        let end = heading.find(']')?;
+        Some(heading[1..end].trim())
+    } else {
+        let first = heading.split_whitespace().next()?;
+        Some(first.trim_end_matches(':').trim())
+    }
 }
 
 fn insert_section(content: &str, section: &str) -> String {
@@ -623,6 +710,184 @@ All notable changes to this project will be documented in this file.
         // Non-existent file returns Error::Read
         let missing_path = tmp_file("cutver-cl-missing");
         let err = read_latest(&missing_path, false).unwrap_err();
+        match err {
+            Error::Read { path: p, .. } => {
+                assert_eq!(p, missing_path.display().to_string());
+            }
+            other => panic!("expected Read error, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_version_middle_release() {
+        let changelog = "\
+# Changelog
+
+All notable changes will be documented in this file.
+
+## [1.2.0] - 2026-03-01
+- Latest feature
+
+## [1.1.0] - 2026-02-01
+### Features
+- Middle feature 1
+- Middle feature 2
+
+### Bug Fixes
+- Middle bug fix
+
+## [1.0.0] - 2026-01-01
+- Initial release
+";
+        let res = extract_version(changelog, "1.1.0", false);
+        let expected = "\
+### Features
+- Middle feature 1
+- Middle feature 2
+
+### Bug Fixes
+- Middle bug fix";
+        assert_eq!(res.as_deref(), Some(expected));
+
+        let first = extract_version(changelog, "1.2.0", false);
+        assert_eq!(first.as_deref(), Some("- Latest feature"));
+
+        let last = extract_version(changelog, "1.0.0", false);
+        assert_eq!(last.as_deref(), Some("- Initial release"));
+    }
+
+    #[test]
+    fn test_extract_version_with_header() {
+        let changelog = "\
+# Changelog
+
+## [1.1.0] - 2026-02-01
+### Features
+- Feature A
+
+## [1.0.0] - 2026-01-01
+- Initial
+";
+        let res = extract_version(changelog, "1.1.0", true);
+        let expected = "\
+## [1.1.0] - 2026-02-01
+### Features
+- Feature A";
+        assert_eq!(res.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn test_extract_version_prefix_flexibility() {
+        let changelog = "\
+# Changelog
+
+## [v0.2.0] - 2026-09-19
+- Note for 0.2.0
+
+## [0.1.0] - 2026-08-10
+- Note for 0.1.0
+
+## 0.0.9 - 2026-07-01
+- Note for 0.0.9
+";
+        // 0.2.0 matches [v0.2.0]
+        assert_eq!(
+            extract_version(changelog, "0.2.0", false).as_deref(),
+            Some("- Note for 0.2.0")
+        );
+        // v0.2.0 matches [v0.2.0]
+        assert_eq!(
+            extract_version(changelog, "v0.2.0", false).as_deref(),
+            Some("- Note for 0.2.0")
+        );
+        // V0.2.0 matches [v0.2.0]
+        assert_eq!(
+            extract_version(changelog, "V0.2.0", false).as_deref(),
+            Some("- Note for 0.2.0")
+        );
+
+        // v0.1.0 matches [0.1.0]
+        assert_eq!(
+            extract_version(changelog, "v0.1.0", false).as_deref(),
+            Some("- Note for 0.1.0")
+        );
+        // 0.1.0 matches [0.1.0]
+        assert_eq!(
+            extract_version(changelog, "0.1.0", false).as_deref(),
+            Some("- Note for 0.1.0")
+        );
+
+        // Heading without brackets: 0.0.9 matches 0.0.9 and v0.0.9
+        assert_eq!(
+            extract_version(changelog, "0.0.9", false).as_deref(),
+            Some("- Note for 0.0.9")
+        );
+        assert_eq!(
+            extract_version(changelog, "v0.0.9", false).as_deref(),
+            Some("- Note for 0.0.9")
+        );
+    }
+
+    #[test]
+    fn test_extract_version_not_found() {
+        let changelog = "\
+# Changelog
+
+## [1.0.0] - 2026-01-01
+- Initial release
+";
+        // Nonexistent versions
+        assert_eq!(extract_version(changelog, "2.0.0", false), None);
+        assert_eq!(extract_version(changelog, "v2.0.0", true), None);
+
+        // Empty or whitespace target versions
+        assert_eq!(extract_version(changelog, "", false), None);
+        assert_eq!(extract_version(changelog, "   ", false), None);
+        assert_eq!(extract_version(changelog, "v", false), None);
+
+        // Empty changelog
+        assert_eq!(extract_version("", "1.0.0", false), None);
+
+        // Unreleased only
+        let unreleased_only = "# Changelog\n\n## [Unreleased]\n- WIP\n";
+        assert_eq!(extract_version(unreleased_only, "1.0.0", false), None);
+    }
+
+    #[test]
+    fn test_read_version_file() {
+        let path = tmp_file("cutver-cl-read-version");
+        let content = "\
+# Changelog
+
+## [1.1.0] - 2026-02-01
+- Second release notes
+
+## [1.0.0] - 2026-01-01
+- First release notes
+";
+        fs::write(&path, content).unwrap();
+
+        // Matching version without header
+        let res = read_version(&path, "1.0.0", false).unwrap();
+        assert_eq!(res, "- First release notes");
+
+        // Matching version with header and 'v' prefix
+        let res_v = read_version(&path, "v1.1.0", true).unwrap();
+        assert_eq!(res_v, "## [1.1.0] - 2026-02-01\n- Second release notes");
+
+        // Missing version returns Error::VersionNotFound
+        let err = read_version(&path, "9.9.9", false).unwrap_err();
+        match err {
+            Error::VersionNotFound { version, path: p } => {
+                assert_eq!(version, "9.9.9");
+                assert_eq!(p, path.display().to_string());
+            }
+            other => panic!("expected VersionNotFound error, got: {other:?}"),
+        }
+
+        // Non-existent file returns Error::Read
+        let missing_path = tmp_file("cutver-cl-missing-version");
+        let err = read_version(&missing_path, "1.0.0", false).unwrap_err();
         match err {
             Error::Read { path: p, .. } => {
                 assert_eq!(p, missing_path.display().to_string());

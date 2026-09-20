@@ -220,6 +220,28 @@ cutver changelog latest [OPTIONS]
 
 ---
 
+### `cutver changelog show <VERSION>`
+
+Extracts release notes for any historical or specific version from the configured changelog file directly to `stdout`. Leading `v` is flexible: querying `0.2.0` matches `[v0.2.0]` and querying `v0.2.0` matches `[0.2.0]`. Automatically terminates extraction at the next release boundary.
+
+```bash
+cutver changelog show <VERSION> [OPTIONS]
+```
+
+#### Arguments
+- `<VERSION>`: The historical or target version to extract (e.g. `0.2.0` or `v0.2.0`).
+
+#### Options
+- `-H, --include-header`: Includes the release title header (e.g. `## [0.2.0] - 2026-09-19`) in the output (default: emits only the markdown body, ideal for `--notes`).
+- `-p, --path <PATH>`: Explicit path to the changelog file (bypasses configuration discovery).
+- `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.
+
+#### Exit Codes
+- `0`: Success. Emitted release notes to `stdout`.
+- `1`: File read error, missing changelog, or version not found in changelog.
+
+---
+
 ## Two-Phase Atomic Architecture & Safety
 
 1. **Guard Phase**: Asserts `git` tree is clean and matches `require_branch`. Validates that the target release tag does not already exist locally or remotely.
