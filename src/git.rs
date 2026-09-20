@@ -325,6 +325,7 @@ pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<St
     Ok(commits)
 }
 
+#[cfg(test)]
 pub fn init_test_repo(dir: impl AsRef<std::path::Path>) {
     let dir = dir.as_ref();
     let run = |args: &[&str]| {
