@@ -70,6 +70,12 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[error("publish command '{command}' timed out after {elapsed_ms}ms (limit {timeout}s)")]
+    PublishCommandTimeout {
+        command: String,
+        timeout: u64,
+        elapsed_ms: u128,
+    },
 }
 
 #[derive(Debug)]

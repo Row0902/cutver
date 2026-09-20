@@ -1248,3 +1248,82 @@ push = true
     let remote_branches = run_git(&remote.dir, &["branch", "-l"]);
     assert!(String::from_utf8_lossy(&remote_branches.stdout).contains("release-branch"));
 }
+
+#[test]
+fn publish_command_aborts_when_timing_out() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("publish-cmd-timeout");
+    let fixture = guard.fixture();
+
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+require_branch = "main"
+
+[publish]
+default_timeout = 1
+commands = ["sleep 5"]
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    run_git_ok(&fixture.dir, &["checkout", "-B", "main"]);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+
+    // Dry run remains unaffected (commands are recorded but not executed)
+    let dry_summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
+    assert_eq!(dry_summary.publish_commands, vec!["sleep 5"]);
+
+    // Real run: command times out and aborts without hanging
+    let start = std::time::Instant::now();
+    let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 4,
+        "command hung or did not abort promptly: took {:?}",
+        elapsed
+    );
+
+    match err {
+        cutver::bump::Error::PublishCommandTimeout {
+            ref command,
+            timeout,
+            elapsed_ms,
+        } => {
+            assert_eq!(command, "sleep 5");
+            assert_eq!(timeout, 1);
+            assert!(elapsed_ms >= 1000);
+        }
+        other => panic!("expected PublishCommandTimeout, got: {:?}", other),
+    }
+
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("publish command 'sleep 5' timed out after"),
+        "unexpected error message: {err_str}"
+    );
+    assert!(
+        err_str.contains("(limit 1s)"),
+        "unexpected error message: {err_str}"
+    );
+}
+
