@@ -187,11 +187,7 @@ pub fn run(
     for cmd in &config.publish.commands {
         let formatted = format_command(cmd, &next.to_string(), &tag);
         if !dry_run {
-            run_publish_command(
-                &formatted,
-                &config.root_dir,
-                config.publish.default_timeout,
-            )?;
+            run_publish_command(&formatted, &config.root_dir, config.publish.default_timeout)?;
         }
         publish_commands.push(formatted);
     }
@@ -381,11 +377,7 @@ fn is_known_lockfile(path: impl AsRef<Path>) -> bool {
         .is_some_and(|name| KNOWN_LOCKFILES.contains(&name))
 }
 
-fn run_publish_command(
-    command: &str,
-    current_dir: &Path,
-    timeout_secs: Option<u64>,
-) -> Result<(), Error> {
+fn run_publish_command(command: &str, current_dir: &Path, timeout_secs: Option<u64>) -> Result<(), Error> {
     let timeout = timeout_secs.map(Duration::from_secs);
     let start = Instant::now();
     let mut child = spawn_command(command, current_dir).map_err(|e| Error::PublishCommandSpawn {

@@ -1355,9 +1355,5 @@ commands = ["sleep 5"]
         err_str.contains("publish command 'sleep 5' timed out after"),
         "unexpected error message: {err_str}"
     );
-    assert!(
-        err_str.contains("(limit 1s)"),
-        "unexpected error message: {err_str}"
-    );
+    assert!(err_str.contains("(limit 1s)"), "unexpected error message: {err_str}");
 }
-
