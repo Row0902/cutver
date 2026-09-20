@@ -1,163 +1,154 @@
+<div align="center">
+
 # cutver
 
-> Cut a release. Bump SemVer. Every project, every language.
+**Cut a release. Bump SemVer. Every project, every language.**
 
-`cutver` is a standalone release tool written in Rust. It synchronizes version
-numbers across any set of manifests, runs your project's own preflight
-verification pipeline, updates the changelog, and creates a clean Git commit
-plus annotated tag — all driven by one declarative `release.toml` file.
+[![CI](https://github.com/Row0902/cutver/actions/workflows/ci.yml/badge.svg)](https://github.com/Row0902/cutver/actions/workflows/ci.yml)
+[![Release](https://github.com/Row0902/cutver/actions/workflows/release.yml/badge.svg)](https://github.com/Row0902/cutver/actions/workflows/release.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/Row0902/cutver?logo=github&color=blue)](https://github.com/Row0902/cutver/releases)
+[![Cosign Signed](https://img.shields.io/badge/cosign-signed_binaries-blue?logo=sigstore)](https://github.com/Row0902/cutver/releases)
+[![Crates.io](https://img.shields.io/crates/v/cutver.svg?logo=rust&color=orange)](https://crates.io/crates/cutver)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-The binary knows nothing about Angular, Tauri, Kotlin, Bun, or Python. Every
-project-specific detail lives in the repository's `release.toml`, so `cutver`
-works on any project in any language.
+<br/>
 
-## Why cutver
+<p align="center">
+  <img src="assets/demo.svg" alt="cutver bump auto preview" width="680">
+</p>
 
-| Guarantee | What it means |
-| --- | --- |
-| Zero project knowledge | The binary never hardcodes frameworks; everything is `release.toml`. |
-| Format-preserving | JSON keys, indentation, comments (TOML), and trailing newlines survive a bump — diffs are one value per manifest. |
-| Atomic releases | All manifest contents are computed in memory first; a failure mid-release never leaves partial edits on disk. |
-| Fail-fast preflight | Your own test/build commands run before any mutation, with optional per-step timeouts — a hung command is killed, never blocks forever. |
-| Safe Git | Requires a clean tree, stages only the files `cutver` modified (never `git add .`), and refuses to run when the release tag already exists. |
-| Dry-run first | Every mutation-capable run can be simulated end to end. |
+</div>
 
-## Quick start
+---
 
+`cutver` is a standalone, format-preserving release engine written in Rust. It synchronizes version numbers across any set of manifests, runs your project's verification pipeline with process-tree timeouts, updates structured changelogs, commits, tags, and publishes — all driven by one declarative `cutver.toml` configuration.
+
+No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stripped comments.
+
+---
+
+## Why cutver?
+
+| Principle | Guarantee |
+| :--- | :--- |
+| **Universal & Polyglot** | The binary hardcodes zero frameworks. Manage Rust, Node, Tauri, Android, Python, Go, or monorepos with equal fidelity. |
+| **Format-Preserving** | Custom byte-span scanner for JSON and `toml_edit` for TOML. Comments, key order, quotes, indentation, and newlines stay untouched. Diffs are strictly 1 line per file. |
+| **Atomic & Resilient** | Two-phase release pipeline: all edits are computed in memory first. Writes use temp-and-rename with `fsync`, rolling back automatically on failure. |
+| **Automated SemVer** | `cutver bump auto` inspects Conventional Commits since the last release tag to deduce whether to cut a patch, minor, or major bump. |
+| **Structured Changelog** | Generates Keep-a-Changelog sections (`### Features`, `### Bug Fixes`, `### Refactoring`) automatically from commit history. |
+| **Fail-Safe Preflight** | Runs verification checks before any mutation. Unix process-group termination (`SIGKILL`) ensures hung tasks never stall your pipeline. |
+| **Lifecycle Hooks & Publish** | Declarative `post_bump` hooks automatically detect and stage lockfiles (`Cargo.lock`, `pnpm-lock.yaml`, etc.), followed by optional automated push. |
+
+---
+
+## Quick Start
+
+### 1. Install `cutver`
+
+**Via Cargo:**
 ```bash
 cargo install cutver
 ```
 
-Add a minimal `release.toml` to your repository root:
+**Via Precompiled Binaries:**
+Download cryptographic Cosign-signed binaries directly from [GitHub Releases](https://github.com/Row0902/cutver/releases) for Linux (GNU/Musl), macOS (Apple Silicon/Intel), and Windows.
+
+---
+
+### 2. Configure `cutver.toml`
+
+Add a minimal `cutver.toml` to your project root. By convention, the first declared manifest serves as the primary source of truth:
 
 ```toml
-[version]
-current_source = "package.json"
-
-[[manifest]]
-path = "package.json"
-kind = "json"
-field = "version"
-
 [[manifest]]
 path = "Cargo.toml"
 kind = "cargo-package"
-```
-
-Then cut a release:
-
-```bash
-cutver bump minor --dry-run   # preview what would happen
-cutver bump minor             # 1.2.3 -> 1.3.0 across every manifest,
-                              # changelog entry, commit, and tag v1.3.0
-```
-
-## Commands
-
-```
-cutver bump <patch|minor|major> [--dry-run] [--skip-preflight <step>...] [-c <path>]
-cutver doctor
-```
-
-| Command | Effect |
-| :--- | :--- |
-| `bump` | Bump the version and run the full release pipeline. |
-| `--dry-run` | Report every step without mutating anything. |
-| `--skip-preflight <step>` | Run a release without named preflight steps (repeatable). |
-| `-c <path>` | Use an explicit `release.toml`; paths resolve relative to its directory. |
-| `doctor` | Validate `release.toml` and report version drift across manifests (exit 0 = consistent, 1 = invalid config, 2 = drift). |
-
-## Configuring a release: `release.toml`
-
-`cutver` walks up from the current directory to find `release.toml` (or use
-`-c`). A full example:
-
-```toml
-[version]
-current_source = "package.json"     # manifest whose version is the source of truth
 
 [[manifest]]
 path = "package.json"
 kind = "json"
-field = "version"                   # dotted path; nested fields like "project.version" work
-
-[[manifest]]
-path = "src-tauri/tauri.conf.json"
-kind = "json"
 field = "version"
-
-[[manifest]]
-path = "src-tauri/Cargo.toml"
-kind = "cargo-package"              # [package] version, comment/format preserving
-
-[[manifest]]
-path = "android/app/build.gradle.kts"
-kind = "gradle"
-version_name_field = "versionName"  # string, set to the new version
-version_code_field = "versionCode"  # integer, incremented on every bump
-
-[[manifest]]
-path = "version.txt"
-kind = "regex"                      # escape hatch for exotic formats
-pattern = "release/v\\d+\\.\\d+\\.\\d+"
-replacement = "release/{{version}}"
-
-[preflight]
-tests = { command = "bun run test --watch=false", timeout = 300 }
-build = "bun run build"             # plain strings stay valid
-default_timeout = 600               # fallback for steps without an explicit timeout
 
 [changelog]
 path = "CHANGELOG.md"
 format = "keep-a-changelog"
-entry_template = "Maintenance and updates."
+mode = "conventional"
 
-[git]
-tag_prefix = "v"
-commit_message = "chore(release): v{version}"
-require_clean_tree = true
-require_branch = "main"             # optional guard
+[hooks]
+post_bump = "cargo check --workspace"
+
+[publish]
+push = true
 ```
 
-### Manifest kinds
+---
 
-| Kind | Format | Mechanism |
-| :--- | :--- | :--- |
-| `json` | `*.json` | Targeted byte-span edit: key order, indentation, and newlines are preserved. |
-| `toml` / `cargo-package` | `*.toml` | `toml_edit` — comments and formatting preserved. |
-| `gradle` | `build.gradle(.kts)` | `versionName` string edit + `versionCode` integer increment. |
-| `regex` | anything | Capture-group replacement; use `{{version}}` in `replacement`. |
+### 3. Cut a Release
 
-### Preflight
+```bash
+# Preview what would happen without touching disk or Git
+cutver bump auto --dry-run
 
-Preflight steps run in declaration order, fail fast on the first failure, and
-abort before any mutation. Each step optionally declares a `timeout` in
-seconds; a global `default_timeout` applies to steps without one (default: no
-timeout). A timed-out step's process group is killed and the release aborts.
+# Run preflight, bump manifests, update changelog, commit, tag, and publish
+cutver bump auto
+```
 
-## What a release looks like
+You can also specify explicit bump levels at any time:
+```bash
+cutver bump patch
+cutver bump minor
+cutver bump major
+```
 
-1. Guards: clean working tree, branch check.
-2. Read the current version from `current_source`; compute the SemVer bump
-   (prerelease/build metadata are dropped).
-3. Abort early if the release tag for the new version already exists.
-4. Run preflight commands (skipped steps are reported, not run).
-5. Compute every manifest's new content in memory, then write atomically —
-   a mid-release failure never leaves partial edits.
-6. Prepend the changelog section.
-7. Stage only the touched files, commit, and create the annotated tag.
+---
 
-## What cutver does not do
+## Supported Manifest Ecosystems
 
-No push, no publishing, no release-note generation. `cutver` cuts the commit
-and tag; what happens after remains your decision.
+`cutver` treats every manifest with surgical precision:
 
-## Status & docs
+- **Rust / Cargo (`cargo-package` / `toml`)**: Preserves TOML comments, structure, and formatting via `toml_edit`.
+- **Node.js / Web (`json`)**: Modifies **only** the byte-span of the version value. Key order, tabs, spacing, and trailing newlines are 100% preserved.
+- **Android / Kotlin (`gradle`)**: Replaces `versionName` with target SemVer and increments `versionCode` integer on every release.
+- **Custom / Universal (`regex`)**: Escape hatch for version strings anywhere (e.g. `version.txt`, Dockerfiles, documentation).
 
-- Design and architecture: [`docs/design.md`](docs/design.md)
-- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- v0.1.0 is published on crates.io; see the issue tracker for planned work.
+---
+
+## How It Compares
+
+| Feature | `cutver` | `semantic-release` | `cargo-release` | `changesets` |
+| :--- | :---: | :---: | :---: | :---: |
+| **Runtime Dependencies** | **None** (Native binary) | Node.js + plugins | Rust toolchain | Node.js |
+| **Polyglot / Multi-language** | **Yes** | Ecosystem plugins | Rust only | JS / TS only |
+| **Format-Preserving (Comments/Order)** | **Yes** | Varies | Partial | Partial |
+| **Two-Phase Atomic Rollback** | **Yes** | No | Partial | No |
+| **Preflight Process-Tree Kill** | **Yes** | No | No | No |
+| **Automatic Lockfile Staging** | **Yes** | Varies | Yes (Cargo only) | Yes (NPM only) |
+| **Single Declarative Config** | **`cutver.toml`** | Multiple files/plugins | `Cargo.toml` | `.changeset/` |
+
+---
+
+## Drift Detection (`cutver doctor`)
+
+Check for version divergence across your declared manifests before cutting a release:
+
+```bash
+cutver doctor
+```
+
+- **Exit 0**: Configuration is valid and all manifests are synchronized.
+- **Exit 1**: Invalid configuration or manifest read error.
+- **Exit 2**: Version drift detected across manifests.
+
+---
+
+## Documentation
+
+- **Complete Technical Reference**: [`docs/references.md`](docs/references.md) — Exhaustive specification for `cutver.toml`, all manifest options, preflight timeouts, lifecycle hooks, and CLI arguments.
+- **Architecture & Internals**: [`docs/design.md`](docs/design.md) — Two-phase release pipeline, atomic byte-span scanner, and failure rollback guarantees.
+- **Changelog**: [`CHANGELOG.md`](CHANGELOG.md) — Release notes and version history.
+
+---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT © [Row0902](https://github.com/Row0902)
