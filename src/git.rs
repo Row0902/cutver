@@ -256,6 +256,23 @@ pub fn tag_name(prefix: &str, version: &str) -> String {
     format!("{prefix}{version}")
 }
 
+pub fn list_tags(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Vec<String>, Error> {
+    let output = run_git(&repo, &["tag", "-l"])?;
+    let text = stdout_text(output, "tag -l")?;
+    let prefix = tag_prefix.filter(|p| !p.is_empty());
+    let tags = text
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|tag| match prefix {
+            Some(p) => tag.starts_with(p),
+            None => true,
+        })
+        .map(String::from)
+        .collect();
+    Ok(tags)
+}
+
 pub fn latest_tag(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Option<String>, Error> {
     let mut args = vec!["describe", "--tags", "--abbrev=0"];
     let match_arg;
@@ -434,6 +451,34 @@ mod tests {
         git(&dir, &["commit", "-am", "c2", "-q"]);
         git(&dir, &["tag", "v1", &first]);
         assert!(tag(&dir, "v1", "1", false).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn test_list_tags_filtered_and_unfiltered() {
+        let dir = tmp_repo();
+        assert_eq!(list_tags(&dir, None).unwrap(), Vec::<String>::new());
+        assert_eq!(list_tags(&dir, Some("v")).unwrap(), Vec::<String>::new());
+
+        git(&dir, &["tag", "v1.0.0"]);
+        git(&dir, &["tag", "v1.1.0"]);
+        git(&dir, &["tag", "2.0.0"]);
+        git(&dir, &["tag", "release/v0.1.0"]);
+
+        let all = list_tags(&dir, None).unwrap();
+        assert_eq!(all, vec!["2.0.0", "release/v0.1.0", "v1.0.0", "v1.1.0"]);
+
+        let all_empty_prefix = list_tags(&dir, Some("")).unwrap();
+        assert_eq!(all_empty_prefix, vec!["2.0.0", "release/v0.1.0", "v1.0.0", "v1.1.0"]);
+
+        let v_tags = list_tags(&dir, Some("v")).unwrap();
+        assert_eq!(v_tags, vec!["v1.0.0", "v1.1.0"]);
+
+        let rel_tags = list_tags(&dir, Some("release/")).unwrap();
+        assert_eq!(rel_tags, vec!["release/v0.1.0"]);
+
+        let none_matching = list_tags(&dir, Some("not-found")).unwrap();
+        assert!(none_matching.is_empty());
     }
 
     #[test]

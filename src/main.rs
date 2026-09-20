@@ -15,12 +15,12 @@ fn main() {
 fn run(args: Cli) -> i32 {
     match args.command {
         Commands::Changelog { command } => run_changelog(args.config.as_deref(), command),
-        Commands::Doctor => {
+        Commands::Doctor { check_changelog } => {
             let config = match load_config(args.config) {
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            run_doctor(&config)
+            run_doctor(&config, check_changelog)
         }
         Commands::Bump {
             level,
@@ -164,33 +164,69 @@ fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_prefl
     }
 }
 
-fn run_doctor(config: &config::Config) -> i32 {
+fn run_doctor(config: &config::Config, check_changelog: bool) -> i32 {
+    let mut has_drift = false;
+
     match bump::doctor(config) {
-        Ok(drifts) if drifts.is_empty() => {
-            let filename =
-                if config.root_dir.join("release.toml").is_file() && !config.root_dir.join("cutver.toml").is_file() {
-                    "release.toml"
-                } else {
-                    "cutver.toml"
-                };
-            println!("{filename} is valid.");
-            println!("  manifests: {}", config.manifest.len());
-            println!("  preflight steps: {}", config.preflight.len());
-            println!("  current source: {}", config.version.current_source);
-            0
-        }
         Ok(drifts) => {
-            eprintln!("Drift detected ({} manifest(s) out of sync):", drifts.len());
-            for Drift { path, expected, actual } in drifts {
-                eprintln!("  - {path}: expected {expected}, found {actual}");
+            if !drifts.is_empty() {
+                eprintln!("Drift detected ({} manifest(s) out of sync):", drifts.len());
+                for Drift { path, expected, actual } in drifts {
+                    eprintln!("  - {path}: expected {expected}, found {actual}");
+                }
+                has_drift = true;
             }
-            2
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            1
+            return 1;
         }
     }
+
+    if check_changelog {
+        match bump::doctor_changelog(config) {
+            Ok(cl_drift) => {
+                if !cl_drift.is_empty() {
+                    eprintln!("Changelog drift detected:");
+                    if !cl_drift.missing_in_changelog.is_empty() {
+                        eprintln!("  Missing in changelog (Git tag exists):");
+                        for tag in &cl_drift.missing_in_changelog {
+                            eprintln!("    - {tag}");
+                        }
+                    }
+                    if !cl_drift.orphan_sections.is_empty() {
+                        eprintln!("  Orphan changelog sections (no Git tag exists):");
+                        for sec in &cl_drift.orphan_sections {
+                            eprintln!("    - {sec}");
+                        }
+                    }
+                    has_drift = true;
+                }
+            }
+            Err(e) => {
+                eprintln!("Error checking changelog: {e}");
+                return 1;
+            }
+        }
+    }
+
+    if has_drift {
+        return 2;
+    }
+
+    let filename = if config.root_dir.join("release.toml").is_file() && !config.root_dir.join("cutver.toml").is_file() {
+        "release.toml"
+    } else {
+        "cutver.toml"
+    };
+    println!("{filename} is valid.");
+    println!("  manifests: {}", config.manifest.len());
+    println!("  preflight steps: {}", config.preflight.len());
+    println!("  current source: {}", config.version.current_source);
+    if check_changelog {
+        println!("  changelog: consistent with Git tags");
+    }
+    0
 }
 
 fn print_summary(summary: &Summary) {
@@ -259,6 +295,30 @@ mod tests {
         path
     }
 
+    fn git_commit(dir: &Path, msg: &str) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["add", "."])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git add failed");
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["commit", "-m", msg, "-q"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git commit failed");
+    }
+
+    fn git_tag(dir: &Path, tag: &str) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["tag", tag])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git tag failed: {tag}");
+    }
+
     #[test]
     fn doctor_reports_valid_config() {
         let dir = temp_dir("cutver-doc-ok");
@@ -312,6 +372,145 @@ kind = "cargo-package"
         let args =
             Cli::try_parse_from(["cutver", "-c", &dir.join("release.toml").to_string_lossy(), "doctor"]).unwrap();
         assert_eq!(run(args), 2);
+    }
+
+    #[test]
+    fn doctor_with_check_changelog_consistent() {
+        let dir = temp_dir("cutver-doc-cl-main-ok");
+        cutver::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n- initial\n",
+        );
+        write(
+            &dir,
+            "release.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "doctor",
+            "--check-changelog",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn doctor_with_check_changelog_drift_missing_in_changelog() {
+        let dir = temp_dir("cutver-doc-cl-main-missing");
+        cutver::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.1.0"}"#);
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n- initial\n",
+        );
+        write(
+            &dir,
+            "release.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+        git_tag(&dir, "v1.1.0");
+
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "doctor",
+            "--check-changelog",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 2);
+    }
+
+    #[test]
+    fn doctor_with_check_changelog_orphan_section() {
+        let dir = temp_dir("cutver-doc-cl-main-orphan");
+        cutver::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-01-02\n- unreleased\n\n## [1.0.0] - 2026-01-01\n- initial\n",
+        );
+        write(
+            &dir,
+            "release.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "doctor",
+            "--check-changelog",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 2);
+    }
+
+    #[test]
+    fn doctor_with_check_changelog_error() {
+        let dir = temp_dir("cutver-doc-cl-main-err");
+        cutver::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(
+            &dir,
+            "release.toml",
+            r#"
+[version]
+current_source = "package.json"
+[changelog]
+path = "NONEXISTENT.md"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+        );
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("release.toml").to_string_lossy(),
+            "doctor",
+            "--check-changelog",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 1);
     }
 
     #[test]

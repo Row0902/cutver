@@ -268,6 +268,34 @@ pub fn read_version(path: impl AsRef<Path>, target_version: &str, include_header
     })
 }
 
+/// List all release versions present in changelog `content`.
+///
+/// Scans `content` line-by-line looking for markdown level-2 headings starting with `## `.
+/// Skips unreleased headings (e.g. `## [Unreleased]` or `## Unreleased`, case-insensitive).
+/// Extracts each version token with `extract_heading_version` and normalizes it with `normalize_version`.
+/// Returns versions preserving the order they appear in the changelog.
+pub fn list_versions(content: &str) -> Vec<String> {
+    let mut versions = Vec::new();
+    for line in content.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            let after_h2 = heading.trim_start();
+            let lower = after_h2.to_ascii_lowercase();
+            let is_unreleased = lower.starts_with("[unreleased]") || lower.starts_with("unreleased");
+            if is_unreleased {
+                continue;
+            }
+
+            if let Some(ver_token) = extract_heading_version(heading) {
+                let normalized = normalize_version(ver_token);
+                if !normalized.is_empty() {
+                    versions.push(normalized.to_string());
+                }
+            }
+        }
+    }
+    versions
+}
+
 fn normalize_version(v: &str) -> &str {
     let trimmed = v.trim();
     if let Some(rest) = trimmed.strip_prefix(['v', 'V']) {
@@ -851,6 +879,49 @@ All notable changes will be documented in this file.
         // Unreleased only
         let unreleased_only = "# Changelog\n\n## [Unreleased]\n- WIP\n";
         assert_eq!(extract_version(unreleased_only, "1.0.0", false), None);
+    }
+
+    #[test]
+    fn test_list_versions_skips_unreleased_and_preserves_order() {
+        let changelog = "\
+# Changelog
+
+All notable changes will be documented in this file.
+
+## [Unreleased]
+- WIP feature
+
+## [v1.3.0] - 2026-03-01
+- Feature 3
+
+## [1.2.0] - 2026-02-15
+- Feature 2
+
+## 1.1.0 - 2026-01-10
+- Feature 1
+
+## [V1.0.0]
+- Initial release
+";
+        let versions = list_versions(changelog);
+        assert_eq!(versions, vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0"]);
+
+        // Test with unbracketed Unreleased
+        let unbracketed = "\
+## Unreleased
+- WIP
+
+## 0.1.0
+- Alpha
+";
+        assert_eq!(list_versions(unbracketed), vec!["0.1.0"]);
+
+        // Test with only unreleased
+        assert!(list_versions("## [Unreleased]\n- WIP\n").is_empty());
+        assert!(list_versions("## UNRELEASED\n- WIP\n").is_empty());
+
+        // Test with empty content
+        assert!(list_versions("").is_empty());
     }
 
     #[test]

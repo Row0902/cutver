@@ -194,10 +194,14 @@ Validates configuration syntax, verifies that all declared manifest files exist 
 cutver doctor [OPTIONS]
 ```
 
+#### Options
+- `--check-changelog`: Also validates that CHANGELOG.md is consistent with Git release tags.
+- `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.
+
 #### Exit Codes
 - `0`: Success. Configuration is valid and all manifests are in sync.
 - `1`: Configuration error, file read failure, or unparseable manifest.
-- `2`: Version drift detected across declared manifests.
+- `2`: Version drift detected across declared manifests or changelog drift detected with Git tags.
 
 ---
 

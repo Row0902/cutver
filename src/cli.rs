@@ -26,8 +26,12 @@ pub enum Commands {
         #[arg(long, value_name = "STEP")]
         skip_preflight: Vec<String>,
     },
-    /// Validate release.toml configuration and report version drift across declared manifests
-    Doctor,
+    /// Validate configuration and report version drift across declared manifests
+    Doctor {
+        /// Also validate that CHANGELOG.md is consistent with Git release tags
+        #[arg(long)]
+        check_changelog: bool,
+    },
     /// Query or extract entries from the changelog
     Changelog {
         #[command(subcommand)]
@@ -158,7 +162,25 @@ mod tests {
     #[test]
     fn doctor_subcommand() {
         let cli = Cli::try_parse_from(["cutver", "doctor"]).unwrap();
-        assert!(matches!(cli.command, Commands::Doctor));
+        assert!(matches!(cli.command, Commands::Doctor { .. }));
+    }
+
+    #[test]
+    fn doctor_defaults() {
+        let cli = Cli::try_parse_from(["cutver", "doctor"]).unwrap();
+        let Commands::Doctor { check_changelog } = cli.command else {
+            panic!("expected doctor");
+        };
+        assert!(!check_changelog);
+    }
+
+    #[test]
+    fn doctor_with_check_changelog() {
+        let cli = Cli::try_parse_from(["cutver", "doctor", "--check-changelog"]).unwrap();
+        let Commands::Doctor { check_changelog } = cli.command else {
+            panic!("expected doctor");
+        };
+        assert!(check_changelog);
     }
 
     #[test]
