@@ -5,7 +5,7 @@ use thiserror::Error;
 
 mod exec;
 
-pub use exec::{doctor, run};
+pub use exec::{doctor, doctor_changelog, run};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -110,6 +110,18 @@ pub struct Drift {
     pub actual: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChangelogDrift {
+    pub missing_in_changelog: Vec<String>,
+    pub orphan_sections: Vec<String>,
+}
+
+impl ChangelogDrift {
+    pub fn is_empty(&self) -> bool {
+        self.missing_in_changelog.is_empty() && self.orphan_sections.is_empty()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Change {
     pub path: String,
@@ -155,6 +167,133 @@ mod tests {
             ),
         );
         config::load(dir.join("release.toml")).unwrap()
+    }
+
+    fn git_commit(dir: &Path, msg: &str) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["add", "."])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git add failed");
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["commit", "-m", msg, "-q"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git commit failed");
+    }
+
+    fn git_tag(dir: &Path, tag: &str) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["tag", tag])
+            .status()
+            .unwrap();
+        assert!(status.success(), "git tag failed: {tag}");
+    }
+
+    #[test]
+    fn test_changelog_drift_is_empty() {
+        let mut drift = ChangelogDrift::default();
+        assert!(drift.is_empty());
+        drift.missing_in_changelog.push("v1.0.0".into());
+        assert!(!drift.is_empty());
+        drift.missing_in_changelog.clear();
+        drift.orphan_sections.push("1.0.0".into());
+        assert!(!drift.is_empty());
+    }
+
+    #[test]
+    fn test_doctor_changelog_consistent() {
+        let dir = tmp("cutver-doc-cl-ok");
+        crate::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.1.0"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.1.0\"\n");
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.1.0] - 2024-01-02\n- feature\n\n## [1.0.0] - 2024-01-01\n- initial\n",
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+        git_tag(&dir, "v1.1.0");
+
+        let cfg = load(&dir, "package.json", "");
+        let drift = doctor_changelog(&cfg).unwrap();
+        assert!(drift.is_empty());
+        assert!(drift.missing_in_changelog.is_empty());
+        assert!(drift.orphan_sections.is_empty());
+    }
+
+    #[test]
+    fn test_doctor_changelog_missing_in_changelog() {
+        let dir = tmp("cutver-doc-cl-missing");
+        crate::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.1.0"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.1.0\"\n");
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2024-01-01\n- initial\n",
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+        git_tag(&dir, "v1.1.0");
+
+        let cfg = load(&dir, "package.json", "");
+        let drift = doctor_changelog(&cfg).unwrap();
+        assert!(!drift.is_empty());
+        assert_eq!(drift.missing_in_changelog, vec!["v1.1.0"]);
+        assert!(drift.orphan_sections.is_empty());
+    }
+
+    #[test]
+    fn test_doctor_changelog_orphan_section() {
+        let dir = tmp("cutver-doc-cl-orphan");
+        crate::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.0.0\"\n");
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2024-01-03\n- unreleased\n\n## [1.0.0] - 2024-01-01\n- initial\n",
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+
+        let cfg = load(&dir, "package.json", "");
+        let drift = doctor_changelog(&cfg).unwrap();
+        assert!(!drift.is_empty());
+        assert!(drift.missing_in_changelog.is_empty());
+        assert_eq!(drift.orphan_sections, vec!["1.2.0"]);
+    }
+
+    #[test]
+    fn test_doctor_changelog_custom_prefix_and_path() {
+        let dir = tmp("cutver-doc-cl-custom");
+        crate::git::init_test_repo(&dir);
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.0.0\"\n");
+        write(
+            &dir,
+            "docs/HISTORY.md",
+            "# History\n\n## [1.0.0] - 2024-01-01\n- initial\n",
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "release/1.0.0");
+        git_tag(&dir, "release/1.1.0");
+
+        let cfg = load(
+            &dir,
+            "package.json",
+            "[git]\ntag_prefix = \"release/\"\n\n[changelog]\npath = \"docs/HISTORY.md\"\n",
+        );
+        let drift = doctor_changelog(&cfg).unwrap();
+        assert!(!drift.is_empty());
+        assert_eq!(drift.missing_in_changelog, vec!["release/1.1.0"]);
+        assert!(drift.orphan_sections.is_empty());
     }
 
     #[test]

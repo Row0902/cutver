@@ -1,5 +1,5 @@
 use crate::atomic;
-use crate::bump::{Change, Drift, Error, Summary, Touched};
+use crate::bump::{Change, ChangelogDrift, Drift, Error, Summary, Touched};
 use crate::changelog;
 use crate::cli::BumpLevel;
 use crate::config::Config;
@@ -12,7 +12,7 @@ use semver::Version;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -348,6 +348,60 @@ pub fn doctor(config: &Config) -> Result<Vec<Drift>, Error> {
         }
     }
     Ok(drifts)
+}
+
+pub fn doctor_changelog(config: &Config) -> Result<ChangelogDrift, Error> {
+    let changelog_path = match &config.changelog.path {
+        Some(p) => {
+            if Path::new(p).is_absolute() {
+                PathBuf::from(p)
+            } else {
+                config.root_dir.join(p)
+            }
+        }
+        None => config.root_dir.join("CHANGELOG.md"),
+    };
+
+    let content = read(&changelog_path)?;
+    let changelog_versions = changelog::list_versions(&content);
+    let git_tags = git::list_tags(&config.root_dir, Some(&config.git.tag_prefix))?;
+
+    let changelog_set: HashSet<&str> = changelog_versions.iter().map(String::as_str).collect();
+    let mut missing_in_changelog = Vec::new();
+    let mut normalized_tags = HashSet::new();
+
+    for tag in &git_tags {
+        let normalized = normalize_tag(tag, &config.git.tag_prefix);
+        if !changelog_set.contains(normalized) {
+            missing_in_changelog.push(tag.clone());
+        }
+        normalized_tags.insert(normalized);
+    }
+
+    let mut orphan_sections = Vec::new();
+    for version in &changelog_versions {
+        if !normalized_tags.contains(version.as_str()) {
+            orphan_sections.push(version.clone());
+        }
+    }
+
+    Ok(ChangelogDrift {
+        missing_in_changelog,
+        orphan_sections,
+    })
+}
+
+fn normalize_tag<'a>(tag: &'a str, prefix: &str) -> &'a str {
+    let mut norm = tag.trim();
+    if !prefix.is_empty()
+        && let Some(rest) = norm.strip_prefix(prefix)
+    {
+        norm = rest;
+    }
+    if let Some(rest) = norm.strip_prefix(['v', 'V']) {
+        norm = rest;
+    }
+    norm
 }
 
 fn read(path: impl AsRef<Path>) -> Result<String, Error> {
