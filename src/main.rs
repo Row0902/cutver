@@ -1,7 +1,8 @@
 use clap::Parser;
 use cutver::bump::{self, Drift, Summary};
-use cutver::cli::{BumpLevel, Cli, Commands};
+use cutver::cli::{BumpLevel, ChangelogCommands, Cli, Commands};
 use cutver::config;
+use std::path::{Path, PathBuf};
 use std::process;
 
 fn main() {
@@ -12,31 +13,112 @@ fn main() {
 }
 
 fn run(args: Cli) -> i32 {
-    let config = match args.config {
+    match args.command {
+        Commands::Changelog { command } => run_changelog(args.config.as_deref(), command),
+        Commands::Doctor => {
+            let config = match load_config(args.config) {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
+            run_doctor(&config)
+        }
+        Commands::Bump {
+            level,
+            dry_run,
+            skip_preflight,
+        } => {
+            let config = match load_config(args.config) {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
+            run_bump(&config, level, dry_run, &skip_preflight)
+        }
+    }
+}
+
+fn load_config(config_path: Option<PathBuf>) -> Result<config::Config, i32> {
+    let config = match config_path {
         Some(path) => config::load(path),
         None => {
             let start_dir = match std::env::current_dir() {
                 Ok(d) => d,
                 Err(e) => {
                     eprintln!("Error: unable to determine current directory: {e}");
-                    return 1;
+                    return Err(1);
                 }
             };
             config::discover(start_dir)
         }
     };
-    match config {
-        Ok(config) => match args.command {
-            Commands::Doctor => run_doctor(&config),
-            Commands::Bump {
-                level,
-                dry_run,
-                skip_preflight,
-            } => run_bump(&config, level, dry_run, &skip_preflight),
-        },
-        Err(e) => {
-            eprintln!("Error loading config: {e}");
-            1
+    config.map_err(|e| {
+        eprintln!("Error loading config: {e}");
+        1
+    })
+}
+
+fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands) -> i32 {
+    match command {
+        ChangelogCommands::Latest { include_header, path } => {
+            let target_path = match path {
+                Some(p) => p,
+                None => {
+                    let config_result = match config_override {
+                        Some(p) => config::load(p),
+                        None => match std::env::current_dir() {
+                            Ok(dir) => config::discover(dir),
+                            Err(e) => {
+                                eprintln!("Error: unable to determine current directory: {e}");
+                                return 1;
+                            }
+                        },
+                    };
+                    match config_result {
+                        Ok(config) => {
+                            if let Some(ref cl_path) = config.changelog.path {
+                                let cl_pb = Path::new(cl_path);
+                                if cl_pb.is_absolute() {
+                                    cl_pb.to_path_buf()
+                                } else {
+                                    config.root_dir.join(cl_pb)
+                                }
+                            } else {
+                                let candidate = config.root_dir.join("CHANGELOG.md");
+                                if candidate.exists() {
+                                    candidate
+                                } else {
+                                    let fallback = PathBuf::from("CHANGELOG.md");
+                                    if fallback.exists() {
+                                        fallback
+                                    } else {
+                                        eprintln!("Error: no changelog path configured and CHANGELOG.md not found");
+                                        return 1;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let fallback = PathBuf::from("CHANGELOG.md");
+                            if fallback.exists() {
+                                fallback
+                            } else {
+                                eprintln!("Error: {e}");
+                                return 1;
+                            }
+                        }
+                    }
+                }
+            };
+
+            match cutver::changelog::read_latest(&target_path, include_header) {
+                Ok(output) => {
+                    println!("{output}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    1
+                }
+            }
         }
     }
 }
@@ -328,5 +410,164 @@ require_clean_tree = false
             cfg.preflight.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             vec!["tests", "z", "a", "m"]
         );
+    }
+
+    #[test]
+    fn changelog_latest_explicit_path() {
+        let dir = temp_dir("cutver-cl-explicit");
+        let cl = write(
+            &dir,
+            "MY_CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-03-01\n\n- Added feature X\n\n## [1.1.0] - 2026-02-01\n\n- Old feature\n",
+        );
+        let args = Cli::try_parse_from(["cutver", "changelog", "latest", "-p", &cl.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn changelog_latest_explicit_path_with_header() {
+        let dir = temp_dir("cutver-cl-header");
+        let cl = write(
+            &dir,
+            "MY_CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-03-01\n\n- Added feature X\n",
+        );
+        let args = Cli::try_parse_from(["cutver", "changelog", "latest", "-H", "-p", &cl.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn changelog_latest_from_config() {
+        let dir = temp_dir("cutver-cl-cfg");
+        write(
+            &dir,
+            "CUSTOM_CHANGELOG.md",
+            "# Changelog\n\n## [2.0.0] - 2026-04-01\n\n- Breaking change\n",
+        );
+        write(&dir, "package.json", r#"{"version": "2.0.0"}"#);
+        write(
+            &dir,
+            "cutver.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+[changelog]
+path = "CUSTOM_CHANGELOG.md"
+"#,
+        );
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("cutver.toml").to_string_lossy(),
+            "changelog",
+            "latest",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn changelog_latest_missing_explicit_path_fails() {
+        let args = Cli::try_parse_from([
+            "cutver",
+            "changelog",
+            "latest",
+            "-p",
+            "this-file-does-not-exist-12345.md",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 1);
+    }
+
+    #[test]
+    fn changelog_latest_no_release_section_fails() {
+        let dir = temp_dir("cutver-cl-no-rel");
+        let cl = write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [Unreleased]\n\n- Work in progress\n",
+        );
+        let args = Cli::try_parse_from(["cutver", "changelog", "latest", "-p", &cl.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 1);
+    }
+
+    #[test]
+    fn changelog_latest_config_missing_file_fails() {
+        let dir = temp_dir("cutver-cl-cfg-missing");
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(
+            &dir,
+            "cutver.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+[changelog]
+path = "NONEXISTENT.md"
+"#,
+        );
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("cutver.toml").to_string_lossy(),
+            "changelog",
+            "latest",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 1);
+    }
+
+    #[test]
+    fn changelog_latest_config_without_changelog_path_fallback() {
+        let dir = temp_dir("cutver-cl-no-path");
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Initial release\n",
+        );
+        write(&dir, "package.json", r#"{"version": "1.0.0"}"#);
+        write(
+            &dir,
+            "cutver.toml",
+            r#"
+[version]
+current_source = "package.json"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#,
+        );
+        let args = Cli::try_parse_from([
+            "cutver",
+            "-c",
+            &dir.join("cutver.toml").to_string_lossy(),
+            "changelog",
+            "latest",
+        ])
+        .unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn run_changelog_direct() {
+        let dir = temp_dir("cutver-run-cl");
+        let cl = write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released\n",
+        );
+        let cmd = ChangelogCommands::Latest {
+            include_header: false,
+            path: Some(cl),
+        };
+        assert_eq!(run_changelog(None, cmd), 0);
     }
 }
