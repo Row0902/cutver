@@ -46,6 +46,18 @@ pub enum ChangelogCommands {
         #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
     },
+    /// Extract release notes for a specific version from the changelog
+    Show {
+        /// The version to extract (e.g. '0.2.0' or 'v0.2.0')
+        #[arg(value_name = "VERSION")]
+        version: String,
+        /// Include the release heading (e.g. '## [0.2.0] - 2026-09-19')
+        #[arg(short = 'H', long)]
+        include_header: bool,
+        /// Explicit path to changelog file (defaults to changelog configured in cutver.toml or CHANGELOG.md)
+        #[arg(short, long, value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -191,6 +203,63 @@ mod tests {
         assert_eq!(
             command_short,
             ChangelogCommands::Latest {
+                include_header: true,
+                path: Some(PathBuf::from("custom.md")),
+            }
+        );
+    }
+
+    #[test]
+    fn changelog_show_defaults() {
+        let cli = Cli::try_parse_from(["cutver", "changelog", "show", "0.2.0"]).unwrap();
+        let Commands::Changelog {
+            command:
+                ChangelogCommands::Show {
+                    version,
+                    include_header,
+                    path,
+                },
+        } = cli.command
+        else {
+            panic!("expected changelog show");
+        };
+        assert_eq!(version, "0.2.0");
+        assert!(!include_header);
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn changelog_show_with_options() {
+        let cli = Cli::try_parse_from([
+            "cutver",
+            "changelog",
+            "show",
+            "v1.0.0",
+            "--include-header",
+            "--path",
+            "docs/HISTORY.md",
+        ])
+        .unwrap();
+        let Commands::Changelog { command } = cli.command else {
+            panic!("expected changelog");
+        };
+        assert_eq!(
+            command,
+            ChangelogCommands::Show {
+                version: "v1.0.0".to_string(),
+                include_header: true,
+                path: Some(PathBuf::from("docs/HISTORY.md")),
+            }
+        );
+
+        let cli_short = Cli::try_parse_from(["cutver", "changelog", "show", "0.3.1", "-H", "-p", "custom.md"]).unwrap();
+        let Commands::Changelog { command: command_short } = cli_short.command else {
+            panic!("expected changelog");
+        };
+        assert_eq!(
+            command_short,
+            ChangelogCommands::Show {
+                version: "0.3.1".to_string(),
                 include_header: true,
                 path: Some(PathBuf::from("custom.md")),
             }

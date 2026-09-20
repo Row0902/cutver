@@ -56,60 +56,88 @@ fn load_config(config_path: Option<PathBuf>) -> Result<config::Config, i32> {
     })
 }
 
+fn resolve_changelog_path(config_override: Option<&Path>, path: Option<PathBuf>) -> Result<PathBuf, i32> {
+    if let Some(p) = path {
+        return Ok(p);
+    }
+
+    let config_result = match config_override {
+        Some(p) => config::load(p),
+        None => match std::env::current_dir() {
+            Ok(dir) => config::discover(dir),
+            Err(e) => {
+                eprintln!("Error: unable to determine current directory: {e}");
+                return Err(1);
+            }
+        },
+    };
+
+    match config_result {
+        Ok(config) => {
+            if let Some(ref cl_path) = config.changelog.path {
+                let cl_pb = Path::new(cl_path);
+                if cl_pb.is_absolute() {
+                    Ok(cl_pb.to_path_buf())
+                } else {
+                    Ok(config.root_dir.join(cl_pb))
+                }
+            } else {
+                let candidate = config.root_dir.join("CHANGELOG.md");
+                if candidate.exists() {
+                    Ok(candidate)
+                } else {
+                    let fallback = PathBuf::from("CHANGELOG.md");
+                    if fallback.exists() {
+                        Ok(fallback)
+                    } else {
+                        eprintln!("Error: no changelog path configured and CHANGELOG.md not found");
+                        Err(1)
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            let fallback = PathBuf::from("CHANGELOG.md");
+            if fallback.exists() {
+                Ok(fallback)
+            } else {
+                eprintln!("Error: {e}");
+                Err(1)
+            }
+        }
+    }
+}
+
 fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands) -> i32 {
     match command {
         ChangelogCommands::Latest { include_header, path } => {
-            let target_path = match path {
-                Some(p) => p,
-                None => {
-                    let config_result = match config_override {
-                        Some(p) => config::load(p),
-                        None => match std::env::current_dir() {
-                            Ok(dir) => config::discover(dir),
-                            Err(e) => {
-                                eprintln!("Error: unable to determine current directory: {e}");
-                                return 1;
-                            }
-                        },
-                    };
-                    match config_result {
-                        Ok(config) => {
-                            if let Some(ref cl_path) = config.changelog.path {
-                                let cl_pb = Path::new(cl_path);
-                                if cl_pb.is_absolute() {
-                                    cl_pb.to_path_buf()
-                                } else {
-                                    config.root_dir.join(cl_pb)
-                                }
-                            } else {
-                                let candidate = config.root_dir.join("CHANGELOG.md");
-                                if candidate.exists() {
-                                    candidate
-                                } else {
-                                    let fallback = PathBuf::from("CHANGELOG.md");
-                                    if fallback.exists() {
-                                        fallback
-                                    } else {
-                                        eprintln!("Error: no changelog path configured and CHANGELOG.md not found");
-                                        return 1;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let fallback = PathBuf::from("CHANGELOG.md");
-                            if fallback.exists() {
-                                fallback
-                            } else {
-                                eprintln!("Error: {e}");
-                                return 1;
-                            }
-                        }
-                    }
-                }
+            let target_path = match resolve_changelog_path(config_override, path) {
+                Ok(p) => p,
+                Err(code) => return code,
             };
 
             match cutver::changelog::read_latest(&target_path, include_header) {
+                Ok(output) => {
+                    println!("{output}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    1
+                }
+            }
+        }
+        ChangelogCommands::Show {
+            version,
+            include_header,
+            path,
+        } => {
+            let target_path = match resolve_changelog_path(config_override, path) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+
+            match cutver::changelog::read_version(&target_path, &version, include_header) {
                 Ok(output) => {
                     println!("{output}");
                     0
@@ -565,6 +593,67 @@ field = "version"
             "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released\n",
         );
         let cmd = ChangelogCommands::Latest {
+            include_header: false,
+            path: Some(cl),
+        };
+        assert_eq!(run_changelog(None, cmd), 0);
+    }
+
+    #[test]
+    fn changelog_show_explicit_path() {
+        let dir = temp_dir("cutver-cl-show-explicit");
+        let cl = write(
+            &dir,
+            "MY_CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-03-01\n\n- Added feature X\n\n## [1.1.0] - 2026-02-01\n\n- Old feature\n",
+        );
+        let args = Cli::try_parse_from(["cutver", "changelog", "show", "1.1.0", "-p", &cl.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn changelog_show_explicit_path_with_header() {
+        let dir = temp_dir("cutver-cl-show-header");
+        let cl = write(
+            &dir,
+            "MY_CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-03-01\n\n- Added feature X\n\n## [1.1.0] - 2026-02-01\n\n- Old feature\n",
+        );
+        let args = Cli::try_parse_from([
+            "cutver",
+            "changelog",
+            "show",
+            "1.1.0",
+            "-H",
+            "-p",
+            &cl.to_string_lossy(),
+        ])
+        .unwrap();
+        assert_eq!(run(args), 0);
+    }
+
+    #[test]
+    fn changelog_show_missing_version_fails() {
+        let dir = temp_dir("cutver-cl-show-missing");
+        let cl = write(
+            &dir,
+            "MY_CHANGELOG.md",
+            "# Changelog\n\n## [1.2.0] - 2026-03-01\n\n- Added feature X\n",
+        );
+        let args = Cli::try_parse_from(["cutver", "changelog", "show", "0.9.0", "-p", &cl.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 1);
+    }
+
+    #[test]
+    fn run_changelog_show_direct() {
+        let dir = temp_dir("cutver-run-cl-show");
+        let cl = write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Released\n",
+        );
+        let cmd = ChangelogCommands::Show {
+            version: "1.0.0".to_string(),
             include_header: false,
             path: Some(cl),
         };
