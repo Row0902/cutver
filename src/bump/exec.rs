@@ -146,7 +146,7 @@ pub fn run(
                 let abs_f = repo.join(rel_f);
                 let already_staged = paths_to_stage.iter().any(|p| {
                     let p_path = Path::new(p);
-                    p_path == rel_f || p_path == abs_f || p_path.ends_with(rel_f)
+                    p_path == rel_f || p_path == abs_f
                 });
                 if !already_staged {
                     paths_to_stage.push(f);

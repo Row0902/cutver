@@ -76,13 +76,15 @@ pub fn require_clean_tree(repo: impl AsRef<Path>, require: bool) -> Result<(), E
     }
 }
 
+pub fn current_branch(repo: impl AsRef<Path>) -> Result<String, Error> {
+    let output = run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?;
+    let text = stdout_text(output, "symbolic-ref --short HEAD")?;
+    Ok(parse_branch(&text).to_string())
+}
+
 pub fn require_branch(repo: impl AsRef<Path>, expected: Option<&str>) -> Result<(), Error> {
     if let Some(branch) = expected {
-        let current = stdout_text(
-            run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?,
-            "symbolic-ref --short HEAD",
-        )?;
-        let current = parse_branch(&current);
+        let current = current_branch(&repo)?;
         if current != branch {
             return Err(Error::Guard {
                 detail: format!("on branch '{current}', expected '{branch}'"),
@@ -180,18 +182,23 @@ pub fn push(
     include_tags: bool,
     dry_run: bool,
 ) -> Result<Option<String>, Error> {
+    let current = if branch.is_none() {
+        current_branch(&repo).unwrap_or_else(|_| "HEAD".to_string())
+    } else {
+        String::new()
+    };
+    let target = branch.unwrap_or(&current);
     if dry_run {
         return Ok(Some(
             format!(
                 "git push origin {} {}",
-                branch.unwrap_or("HEAD"),
+                target,
                 if include_tags { "--tags" } else { "" }
             )
             .trim()
             .to_string(),
         ));
     }
-    let target = branch.unwrap_or("HEAD");
     let mut args = vec!["push", "origin", target];
     if include_tags {
         args.push("--tags");
@@ -469,22 +476,59 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn current_branch_resolves_and_detects_detached_head() {
+        let dir = tmp_repo();
+        let branch = current_branch(&dir).unwrap();
+        assert!(!branch.is_empty());
+        git(&dir, &["checkout", "--detach", "HEAD", "-q"]);
+        assert!(current_branch(&dir).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
     fn push_dry_run_formatting() {
+        let dir = tmp_repo();
+        let branch = current_branch(&dir).unwrap();
+
         assert_eq!(
-            push(".", Some("main"), true, true).unwrap(),
+            push(&dir, Some("main"), true, true).unwrap(),
             Some("git push origin main --tags".into())
         );
         assert_eq!(
-            push(".", None, true, true).unwrap(),
-            Some("git push origin HEAD --tags".into())
+            push(&dir, None, true, true).unwrap(),
+            Some(format!("git push origin {branch} --tags"))
         );
         assert_eq!(
-            push(".", Some("main"), false, true).unwrap(),
+            push(&dir, Some("main"), false, true).unwrap(),
             Some("git push origin main".into())
         );
         assert_eq!(
-            push(".", None, false, true).unwrap(),
+            push(&dir, None, false, true).unwrap(),
+            Some(format!("git push origin {branch}"))
+        );
+
+        // Detached HEAD falls back to HEAD
+        git(&dir, &["checkout", "--detach", "HEAD", "-q"]);
+        assert_eq!(
+            push(&dir, None, true, true).unwrap(),
+            Some("git push origin HEAD --tags".into())
+        );
+        assert_eq!(
+            push(&dir, None, false, true).unwrap(),
             Some("git push origin HEAD".into())
+        );
+    }
+
+    #[test]
+    fn push_dry_run_non_git_repo_falls_back_to_head() {
+        assert_eq!(
+            push(Path::new("/nonexistent-dir-cutver"), None, true, true).unwrap(),
+            Some("git push origin HEAD --tags".into())
+        );
+        assert_eq!(
+            push(Path::new("/nonexistent-dir-cutver"), Some("main"), true, true).unwrap(),
+            Some("git push origin main --tags".into())
         );
     }
 
@@ -514,6 +558,15 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "v1.0.0");
+
+        let branch = current_branch(&dir).unwrap();
+        let out_branch = Command::new("git")
+            .current_dir(&remote)
+            .args(["branch", "-l", &branch])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out_branch.stdout).contains(&branch));
+
         let _ = fs::remove_dir_all(&remote);
     }
 

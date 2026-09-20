@@ -917,6 +917,74 @@ post_bump = "echo \"lockfile-version-1.3.0\" > Cargo.lock"
 }
 
 #[test]
+fn post_bump_stages_both_root_and_nested_lockfiles() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("post-bump-root-and-nested-lockfiles");
+    let fixture = guard.fixture();
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+
+[hooks]
+post_bump = "echo \"lockfile-root-1.3.0\" > Cargo.lock && echo \"lockfile-nested-1.3.0\" > crates/core/Cargo.lock && echo \"lockfile-app-1.3.0\" > App/Cargo.lock"
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("Cargo.lock", "lockfile-root-1.2.3\n");
+    fixture.write("crates/core/Cargo.lock", "lockfile-nested-1.2.3\n");
+    fixture.write("App/Cargo.lock", "lockfile-app-1.2.3\n");
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+
+    // All lockfiles were updated
+    assert_eq!(fixture.read("Cargo.lock").trim(), "lockfile-root-1.3.0");
+    assert_eq!(fixture.read("crates/core/Cargo.lock").trim(), "lockfile-nested-1.3.0");
+    assert_eq!(fixture.read("App/Cargo.lock").trim(), "lockfile-app-1.3.0");
+
+    // Both root and nested lockfiles must be included in the release commit
+    let commit_files = head_commit_files(fixture);
+    assert!(
+        commit_files.contains(&"Cargo.lock".to_string()),
+        "commit_files should contain root Cargo.lock: {commit_files:?}"
+    );
+    assert!(
+        commit_files.contains(&"crates/core/Cargo.lock".to_string()),
+        "commit_files should contain crates/core/Cargo.lock: {commit_files:?}"
+    );
+    assert!(
+        commit_files.contains(&"App/Cargo.lock".to_string()),
+        "commit_files should contain App/Cargo.lock: {commit_files:?}"
+    );
+
+    // Tree should be clean after bump
+    let status_out = run_git(&fixture.dir, &["status", "--porcelain"]);
+    assert!(
+        String::from_utf8_lossy(&status_out.stdout).trim().is_empty(),
+        "working tree must be clean after bump"
+    );
+}
+
+#[test]
 fn post_bump_restricts_staging_to_known_lockfiles_and_leaves_arbitrary_files_unstaged() {
     assert!(git_available());
     let guard = FixtureGuard::new("post-bump-lockfile-only");
@@ -1119,4 +1187,64 @@ commands = ["echo published {version} > published.txt"]
     // Verify tag pushed to remote
     let remote_tags = run_git(&remote.dir, &["tag", "-l"]);
     assert!(String::from_utf8_lossy(&remote_tags.stdout).contains("v1.3.0"));
+}
+
+#[test]
+fn publish_push_resolves_active_branch_when_require_branch_is_omitted() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("publish-push-no-require-branch");
+    let fixture = guard.fixture();
+    let remote = Fixture::new("remote-target-no-req-branch");
+    run_git_ok(&remote.dir, &["init", "--bare"]);
+
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+require_clean_tree = true
+
+[publish]
+push = true
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    run_git_ok(&fixture.dir, &["checkout", "-B", "release-branch"]);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["remote", "add", "origin", remote.dir.to_str().unwrap()]);
+
+    let cfg = config::load("cutver.toml").unwrap();
+
+    // Dry run dynamically resolves active branch "release-branch"
+    let dry_summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
+    assert_eq!(
+        dry_summary.publish_push_command.as_deref(),
+        Some("git push origin release-branch --tags")
+    );
+
+    // Real run pushes release-branch and tag to remote
+    let real_summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(real_summary.publish_push_command.as_deref(), None);
+
+    // Verify tag pushed to remote
+    let remote_tags = run_git(&remote.dir, &["tag", "-l"]);
+    assert!(String::from_utf8_lossy(&remote_tags.stdout).contains("v1.3.0"));
+
+    // Verify release-branch pushed to remote
+    let remote_branches = run_git(&remote.dir, &["branch", "-l"]);
+    assert!(String::from_utf8_lossy(&remote_branches.stdout).contains("release-branch"));
 }
