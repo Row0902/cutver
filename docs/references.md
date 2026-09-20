@@ -38,6 +38,11 @@ kind = "json"
 field = "version"                 # Dotted path to version field (e.g., "version" or "app.version")
 
 [[manifest]]
+path = "pyproject.toml"
+kind = "pyproject"                # PEP 621 (uv, Hatch, PDM, Flit, Maturin, setuptools) & Poetry
+# table = "project"               # Optional override: "project" (default), "tool.poetry", or custom table
+
+[[manifest]]
 path = "android/app/build.gradle.kts"
 kind = "gradle"
 version_name_field = "versionName" # String field updated to new SemVer (default: "versionName")
@@ -91,6 +96,7 @@ Every manifest editor is format-preserving and designed to produce minimal, sing
 | Kind | Target File | Editor Mechanism | Formatting Preservation |
 | :--- | :--- | :--- | :--- |
 | `cargo-package` | `Cargo.toml` | `toml_edit` AST | Preserves comments, ordering, formatting, and tables. |
+| `pyproject` | `pyproject.toml` | `toml_edit` AST | Native PEP 621 (`[project] version`) and Poetry (`[tool.poetry] version`). Preserves comments, whitespace, and tables. |
 | `json` | `*.json` | Custom byte-span scanner | Replaces **only** the string slice of the version value. Preserves key order, exact indentation, comments (JSONC), and newlines. |
 | `gradle` | `build.gradle`, `*.gradle.kts` | Regex byte replacement | Updates `versionName` string and increments `versionCode` integer without altering Gradle DSL structure. |
 | `regex` | Any arbitrary text file | Regular expression capture | Replaces match with `replacement`, substituting `{{version}}` with the target SemVer string. |
@@ -156,9 +162,9 @@ The `[hooks] post_bump` command runs after manifests and changelog have been upd
 To prevent accidental staging of unrelated files, `cutver` strictly filters files modified by `post_bump`. Only known lockfile paths are staged:
 
 - `Cargo.lock`
-- `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`
+- `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`
 - `gradle.lockfile`
-- `poetry.lock`, `Pipfile.lock`
+- `poetry.lock`, `Pipfile.lock`, `uv.lock`, `pdm.lock`
 - `composer.lock`
 - `mix.lock`
 

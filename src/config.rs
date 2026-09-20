@@ -93,6 +93,11 @@ pub enum ManifestKind {
         pattern: String,
         replacement: String,
     },
+    #[serde(alias = "pyproject-toml")]
+    Pyproject {
+        #[serde(default)]
+        table: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -835,5 +840,28 @@ default_timeout = 60
         assert!(!default_cfg.publish.push);
         assert!(default_cfg.publish.commands.is_empty());
         assert_eq!(default_cfg.publish.default_timeout, None);
+    }
+
+    #[test]
+    fn pyproject_manifest_config_parsing() {
+        let cfg = load_str(&manifest("pyproject", "")).unwrap();
+        assert_eq!(cfg.manifest[0].kind, ManifestKind::Pyproject { table: None });
+    }
+
+    #[test]
+    fn pyproject_manifest_with_table() {
+        let cfg = load_str(&manifest("pyproject", "table = \"tool.poetry\"\n")).unwrap();
+        assert_eq!(
+            cfg.manifest[0].kind,
+            ManifestKind::Pyproject {
+                table: Some("tool.poetry".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn pyproject_manifest_alias() {
+        let cfg = load_str(&manifest("pyproject-toml", "")).unwrap();
+        assert_eq!(cfg.manifest[0].kind, ManifestKind::Pyproject { table: None });
     }
 }

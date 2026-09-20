@@ -5,6 +5,7 @@ pub mod cargo_toml;
 pub mod gradle;
 pub mod json;
 pub mod json_scan;
+pub mod pyproject;
 pub mod regex;
 
 #[derive(Debug, Error)]
@@ -46,5 +47,40 @@ pub fn editor_for(entry: &config::Manifest) -> Result<Box<dyn ManifestEditor>, E
         config::ManifestKind::Regex { pattern, replacement } => {
             Ok(Box::new(regex::RegexEditor::new(pattern.clone(), replacement.clone())))
         }
+        config::ManifestKind::Pyproject { table } => Ok(Box::new(pyproject::PyprojectEditor::new(table.clone()))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Manifest, ManifestKind};
+
+    #[test]
+    fn editor_for_pyproject() {
+        let entry = Manifest {
+            path: "pyproject.toml".into(),
+            primary: true,
+            kind: ManifestKind::Pyproject { table: None },
+        };
+        let editor = editor_for(&entry).expect("editor_for should succeed for pyproject");
+        let content = "[project]\nname = \"demo\"\nversion = \"1.0.0\"\n";
+        let v = editor.read_version(content).unwrap();
+        assert_eq!(v, Version::parse("1.0.0").unwrap());
+    }
+
+    #[test]
+    fn editor_for_pyproject_with_table() {
+        let entry = Manifest {
+            path: "pyproject.toml".into(),
+            primary: true,
+            kind: ManifestKind::Pyproject {
+                table: Some("tool.poetry".into()),
+            },
+        };
+        let editor = editor_for(&entry).expect("editor_for should succeed for pyproject with table");
+        let content = "[tool.poetry]\nname = \"demo\"\nversion = \"2.0.0\"\n";
+        let v = editor.read_version(content).unwrap();
+        assert_eq!(v, Version::parse("2.0.0").unwrap());
     }
 }
