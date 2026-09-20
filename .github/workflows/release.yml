@@ -80,10 +80,18 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
+      - name: Extract release notes
+        run: |
+          mkdir -p /tmp/cutver-bin
+          tar -xzf dist/cutver-*-x86_64-unknown-linux-gnu.tar.gz -C /tmp/cutver-bin
+          /tmp/cutver-bin/cutver-*/cutver changelog latest > RELEASE_NOTES.md
+          echo "=== Generated Release Notes ==="
+          cat RELEASE_NOTES.md
       - name: Generate SHA256SUMS
         run: |
           cd dist
@@ -99,5 +107,5 @@ jobs:
       - name: Create release and upload binaries
         uses: softprops/action-gh-release@v3
         with:
+          body_path: RELEASE_NOTES.md
           files: dist/*
-          generate_release_notes: true
