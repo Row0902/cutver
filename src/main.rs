@@ -1,5 +1,5 @@
 use clap::Parser;
-use cutver::cli::{run, Cli};
+use cutver::cli::{Cli, run};
 use std::process;
 
 fn main() {
