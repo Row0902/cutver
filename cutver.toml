@@ -23,3 +23,6 @@ require_branch = "main"
 
 [hooks]
 post_bump = "cargo check --workspace"
+
+[publish]
+push = true
