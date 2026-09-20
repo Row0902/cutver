@@ -1,7 +1,9 @@
 use crate::atomic;
 use crate::bump::{Change, Drift, Error, Summary, Touched};
 use crate::changelog;
+use crate::cli::BumpLevel;
 use crate::config::Config;
+use crate::conventional;
 use crate::git;
 use crate::manifest;
 use crate::preflight;
@@ -12,7 +14,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[String]) -> Result<Summary, Error> {
+pub fn run(
+    config: &Config,
+    bump_kind: impl Into<BumpLevel>,
+    dry_run: bool,
+    skip_preflight: &[String],
+) -> Result<Summary, Error> {
     // cutver runs from the project root where release.toml lives; the git
     // repository root is therefore the directory containing release.toml.
     let repo = &config.root_dir;
@@ -20,7 +27,21 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     git::require_branch(repo, config.git.require_branch.as_deref())?;
 
     let (source_entry, _editor, current) = current_source(config)?;
-    let next = semver_bump::bump(&current, bump_kind);
+    let bump_level = bump_kind.into();
+    let mut auto_commits = None;
+    let bump_semver = match bump_level {
+        BumpLevel::Patch => Bump::Patch,
+        BumpLevel::Minor => Bump::Minor,
+        BumpLevel::Major => Bump::Major,
+        BumpLevel::Auto => {
+            let tag = git::latest_tag(repo, Some(&config.git.tag_prefix))?;
+            let commits = git::commits_since(repo, tag.as_deref())?;
+            let (deduced, parsed) = conventional::parse_and_deduce_bump(&commits);
+            auto_commits = Some(parsed);
+            deduced
+        }
+    };
+    let next = semver_bump::bump(&current, bump_semver);
     let commit_message = git::commit_message(&config.git.commit_message, &next.to_string());
     let tag = git::tag_name(&config.git.tag_prefix, &next.to_string());
 
@@ -51,12 +72,88 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
 
     let original_changelog = if let Some(cl_path) = &config.changelog.path {
         let original = if !dry_run { read(cl_path).ok() } else { None };
-        if !dry_run && let Err(e) = changelog::update(cl_path, &tag, &config.changelog.entry_template) {
-            rollback(&computed, &paths_to_stage, None);
-            return Err(Error::Changelog(e));
+        if !dry_run {
+            let update_res = if config.changelog.mode == "template" {
+                changelog::update(cl_path, &tag, &config.changelog.entry_template)
+            } else {
+                let commits = match auto_commits {
+                    Some(parsed) => parsed,
+                    None => {
+                        let latest_tag = match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                rollback(&computed, &paths_to_stage, None);
+                                return Err(Error::Git(e));
+                            }
+                        };
+                        let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                rollback(&computed, &paths_to_stage, None);
+                                return Err(Error::Git(e));
+                            }
+                        };
+                        let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
+                        parsed
+                    }
+                };
+                let body = changelog::render_body(&config.changelog, &commits);
+                changelog::update(cl_path, &tag, &body)
+            };
+            if let Err(e) = update_res {
+                rollback(&computed, &paths_to_stage, None);
+                return Err(Error::Changelog(e));
+            }
         }
         paths_to_stage.push(cl_path.clone());
         original.map(|orig| (cl_path.clone(), orig))
+    } else {
+        None
+    };
+
+    let summary_post_bump = if let Some(raw_post_bump) = &config.hooks.post_bump {
+        let cmd = format_command(raw_post_bump, &next.to_string(), &tag);
+        if !dry_run {
+            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+            let status = std::process::Command::new(shell)
+                .arg(flag)
+                .arg(&cmd)
+                .current_dir(&config.root_dir)
+                .status()
+                .map_err(|e| {
+                    rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                    Error::PostBumpHookSpawn {
+                        command: cmd.clone(),
+                        source: e,
+                    }
+                })?;
+            if !status.success() {
+                rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                return Err(Error::PostBumpHookFailed { command: cmd, status });
+            }
+            let modified = match git::status_files(repo) {
+                Ok(m) => m,
+                Err(e) => {
+                    rollback(&computed, &paths_to_stage, original_changelog.as_ref());
+                    return Err(Error::Git(e));
+                }
+            };
+            for f in modified {
+                let rel_f = Path::new(&f);
+                if !is_known_lockfile(rel_f) {
+                    continue;
+                }
+                let abs_f = repo.join(rel_f);
+                let already_staged = paths_to_stage.iter().any(|p| {
+                    let p_path = Path::new(p);
+                    p_path == rel_f || p_path == abs_f
+                });
+                if !already_staged {
+                    paths_to_stage.push(f);
+                }
+            }
+        }
+        Some(cmd)
     } else {
         None
     };
@@ -77,6 +174,36 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
     })?;
     let tag_skipped = tag_report.is_some() && !dry_run;
 
+    let publish_push_command = if config.publish.push {
+        git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)?
+    } else {
+        None
+    };
+
+    let mut publish_commands = Vec::new();
+    for cmd in &config.publish.commands {
+        let formatted = format_command(cmd, &next.to_string(), &tag);
+        if !dry_run {
+            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+            let status = std::process::Command::new(shell)
+                .arg(flag)
+                .arg(&formatted)
+                .current_dir(&config.root_dir)
+                .status()
+                .map_err(|e| Error::PublishCommandSpawn {
+                    command: formatted.clone(),
+                    source: e,
+                })?;
+            if !status.success() {
+                return Err(Error::PublishCommandFailed {
+                    command: formatted,
+                    status,
+                });
+            }
+        }
+        publish_commands.push(formatted);
+    }
+
     Ok(Summary {
         source: source_entry.path.clone(),
         current,
@@ -88,7 +215,15 @@ pub fn run(config: &Config, bump_kind: Bump, dry_run: bool, skip_preflight: &[St
         commit_message,
         tag,
         tag_skipped,
+        post_bump: summary_post_bump,
+        publish_push: config.publish.push,
+        publish_push_command,
+        publish_commands,
     })
+}
+
+fn format_command(template: &str, version: &str, tag: &str) -> String {
+    template.replace("{version}", version).replace("{tag}", tag)
 }
 
 /// Single source of truth for mapping `config.version.current_source` to its
@@ -233,4 +368,57 @@ fn read(path: impl AsRef<Path>) -> Result<String, Error> {
         path: path.display().to_string(),
         source: e,
     })
+}
+
+const KNOWN_LOCKFILES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
+    "gradle.lockfile",
+    "poetry.lock",
+    "Pipfile.lock",
+    "composer.lock",
+];
+
+fn is_known_lockfile(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| KNOWN_LOCKFILES.contains(&name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_known_lockfiles_matched() {
+        for lockfile in KNOWN_LOCKFILES {
+            assert!(is_known_lockfile(Path::new(lockfile)));
+            assert!(is_known_lockfile(Path::new("subdir").join(lockfile)));
+            assert!(is_known_lockfile(Path::new("deep/nested/path").join(lockfile)));
+        }
+    }
+
+    #[test]
+    fn test_arbitrary_files_not_matched() {
+        let non_lockfiles = [
+            "unrelated.txt",
+            "Cargo.toml",
+            "package.json",
+            "release.toml",
+            "cutver.toml",
+            "Cargo.lock.backup",
+            "not-Cargo.lock",
+            "lockfile",
+            "gradle.lock",
+            "poetry.lock.bak",
+            "",
+        ];
+        for f in non_lockfiles {
+            assert!(!is_known_lockfile(Path::new(f)));
+        }
+    }
 }

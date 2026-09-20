@@ -76,13 +76,15 @@ pub fn require_clean_tree(repo: impl AsRef<Path>, require: bool) -> Result<(), E
     }
 }
 
+pub fn current_branch(repo: impl AsRef<Path>) -> Result<String, Error> {
+    let output = run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?;
+    let text = stdout_text(output, "symbolic-ref --short HEAD")?;
+    Ok(parse_branch(&text).to_string())
+}
+
 pub fn require_branch(repo: impl AsRef<Path>, expected: Option<&str>) -> Result<(), Error> {
     if let Some(branch) = expected {
-        let current = stdout_text(
-            run_git(&repo, &["symbolic-ref", "--short", "HEAD"])?,
-            "symbolic-ref --short HEAD",
-        )?;
-        let current = parse_branch(&current);
+        let current = current_branch(&repo)?;
         if current != branch {
             return Err(Error::Guard {
                 detail: format!("on branch '{current}', expected '{branch}'"),
@@ -174,12 +176,136 @@ pub fn tag(repo: impl AsRef<Path>, tag_name: &str, version: &str, dry_run: bool)
     }
 }
 
+pub fn push(
+    repo: impl AsRef<Path>,
+    branch: Option<&str>,
+    include_tags: bool,
+    dry_run: bool,
+) -> Result<Option<String>, Error> {
+    let current = if branch.is_none() {
+        current_branch(&repo).unwrap_or_else(|_| "HEAD".to_string())
+    } else {
+        String::new()
+    };
+    let target = branch.unwrap_or(&current);
+    if dry_run {
+        return Ok(Some(
+            format!(
+                "git push origin {} {}",
+                target,
+                if include_tags { "--tags" } else { "" }
+            )
+            .trim()
+            .to_string(),
+        ));
+    }
+    let mut args = vec!["push", "origin", target];
+    if include_tags {
+        args.push("--tags");
+    }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(&args)
+        .status()
+        .map_err(|e| Error::Command {
+            command: args.join(" "),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: args.join(" "),
+            status,
+        })
+    }
+}
+
+pub fn status_files(repo: impl AsRef<Path>) -> Result<Vec<String>, Error> {
+    let text = stdout_text(
+        run_git(&repo, &["status", "--porcelain", "-uno"])?,
+        "status --porcelain -uno",
+    )?;
+    let mut files = Vec::new();
+    for line in text.lines() {
+        if line.len() >= 4 {
+            let status_code = &line[..2];
+            if status_code.starts_with('?') || status_code.starts_with('!') {
+                continue;
+            }
+            let mut file_path = line[3..].trim();
+            if file_path.starts_with('"') && file_path.ends_with('"') && file_path.len() >= 2 {
+                file_path = &file_path[1..file_path.len() - 1];
+            }
+            if let Some((_, new_path)) = file_path.split_once(" -> ") {
+                file_path = new_path.trim();
+            }
+            if !file_path.is_empty() {
+                files.push(file_path.to_string());
+            }
+        }
+    }
+    Ok(files)
+}
+
 pub fn commit_message(template: &str, version: &str) -> String {
     template.replace("{version}", version)
 }
 
 pub fn tag_name(prefix: &str, version: &str) -> String {
     format!("{prefix}{version}")
+}
+
+pub fn latest_tag(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Option<String>, Error> {
+    let mut args = vec!["describe", "--tags", "--abbrev=0"];
+    let match_arg;
+    if let Some(prefix) = tag_prefix
+        && !prefix.is_empty()
+    {
+        match_arg = format!("{prefix}*");
+        args.push("--match");
+        args.push(&match_arg);
+    }
+    let output = run_git(&repo, &args)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let tag = String::from_utf8(output.stdout)
+        .map_err(|e| Error::Output {
+            source: io::Error::new(io::ErrorKind::InvalidData, e),
+        })?
+        .trim()
+        .to_string();
+    if tag.is_empty() { Ok(None) } else { Ok(Some(tag)) }
+}
+
+pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<String>, Error> {
+    let range;
+    let mut args = vec!["log"];
+    if let Some(t) = tag {
+        range = format!("{t}..HEAD");
+        args.push(&range);
+    }
+    args.push("--format=%B%x00");
+    let output = run_git(&repo, &args)?;
+    if !output.status.success() {
+        if tag.is_none() {
+            return Ok(Vec::new());
+        }
+        return Err(Error::Status {
+            command: args.join(" "),
+            status: output.status,
+        });
+    }
+    let text = String::from_utf8(output.stdout).map_err(|e| Error::Output {
+        source: io::Error::new(io::ErrorKind::InvalidData, e),
+    })?;
+    let commits = text
+        .split('\0')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    Ok(commits)
 }
 
 pub fn init_test_repo(dir: impl AsRef<std::path::Path>) {
@@ -308,5 +434,152 @@ mod tests {
         git(&dir, &["commit", "-am", "c2", "-q"]);
         git(&dir, &["tag", "v1", &first]);
         assert!(tag(&dir, "v1", "1", false).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn latest_tag_and_commits_since() {
+        let dir = tmp_repo();
+        // Initially no tags
+        assert_eq!(latest_tag(&dir, None).unwrap(), None);
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), None);
+
+        // All commits since initial
+        let all_commits = commits_since(&dir, None).unwrap();
+        assert_eq!(all_commits, vec!["i"]);
+
+        // Tag initial commit as v1.0.0
+        git(&dir, &["tag", "v1.0.0"]);
+        assert_eq!(latest_tag(&dir, None).unwrap(), Some("v1.0.0".to_string()));
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), Some("v1.0.0".to_string()));
+        assert_eq!(latest_tag(&dir, Some("release/")).unwrap(), None);
+
+        // No commits since v1.0.0 yet
+        let since_v1 = commits_since(&dir, Some("v1.0.0")).unwrap();
+        assert!(since_v1.is_empty());
+
+        // Add a commit with multiline message
+        fs::write(dir.join("x"), "c2").unwrap();
+        git(
+            &dir,
+            &["commit", "-am", "feat: new feature\n\nDetailed explanation", "-q"],
+        );
+
+        // Add another commit
+        fs::write(dir.join("x"), "c3").unwrap();
+        git(&dir, &["commit", "-am", "fix: small bug", "-q"]);
+
+        let new_commits = commits_since(&dir, Some("v1.0.0")).unwrap();
+        assert_eq!(new_commits.len(), 2);
+        assert_eq!(new_commits[0], "fix: small bug");
+        assert_eq!(new_commits[1], "feat: new feature\n\nDetailed explanation");
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn current_branch_resolves_and_detects_detached_head() {
+        let dir = tmp_repo();
+        let branch = current_branch(&dir).unwrap();
+        assert!(!branch.is_empty());
+        git(&dir, &["checkout", "--detach", "HEAD", "-q"]);
+        assert!(current_branch(&dir).is_err());
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn push_dry_run_formatting() {
+        let dir = tmp_repo();
+        let branch = current_branch(&dir).unwrap();
+
+        assert_eq!(
+            push(&dir, Some("main"), true, true).unwrap(),
+            Some("git push origin main --tags".into())
+        );
+        assert_eq!(
+            push(&dir, None, true, true).unwrap(),
+            Some(format!("git push origin {branch} --tags"))
+        );
+        assert_eq!(
+            push(&dir, Some("main"), false, true).unwrap(),
+            Some("git push origin main".into())
+        );
+        assert_eq!(
+            push(&dir, None, false, true).unwrap(),
+            Some(format!("git push origin {branch}"))
+        );
+
+        // Detached HEAD falls back to HEAD
+        git(&dir, &["checkout", "--detach", "HEAD", "-q"]);
+        assert_eq!(
+            push(&dir, None, true, true).unwrap(),
+            Some("git push origin HEAD --tags".into())
+        );
+        assert_eq!(
+            push(&dir, None, false, true).unwrap(),
+            Some("git push origin HEAD".into())
+        );
+    }
+
+    #[test]
+    fn push_dry_run_non_git_repo_falls_back_to_head() {
+        assert_eq!(
+            push(Path::new("/nonexistent-dir-cutver"), None, true, true).unwrap(),
+            Some("git push origin HEAD --tags".into())
+        );
+        assert_eq!(
+            push(Path::new("/nonexistent-dir-cutver"), Some("main"), true, true).unwrap(),
+            Some("git push origin main --tags".into())
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn push_executes_to_remote() {
+        let dir = tmp_repo();
+        let remote = std::env::temp_dir().join(tmp_id("cutver-git-remote"));
+        let _ = fs::remove_dir_all(&remote);
+        fs::create_dir_all(&remote).unwrap();
+        assert!(
+            Command::new("git")
+                .current_dir(&remote)
+                .args(["init", "--bare", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git(&dir, &["tag", "v1.0.0"]);
+
+        assert_eq!(push(&dir, None, true, false).unwrap(), None);
+
+        let out = Command::new("git")
+            .current_dir(&remote)
+            .args(["tag", "-l", "v1.0.0"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "v1.0.0");
+
+        let branch = current_branch(&dir).unwrap();
+        let out_branch = Command::new("git")
+            .current_dir(&remote)
+            .args(["branch", "-l", &branch])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out_branch.stdout).contains(&branch));
+
+        let _ = fs::remove_dir_all(&remote);
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn status_files_detects_changes_and_ignores_untracked() {
+        let dir = tmp_repo();
+        assert!(status_files(&dir).unwrap().is_empty());
+        fs::write(dir.join("x"), "modified").unwrap();
+        fs::write(dir.join("y.txt"), "untracked").unwrap();
+        let files = status_files(&dir).unwrap();
+        assert!(files.contains(&"x".to_string()));
+        // Untracked files must NEVER be returned
+        assert!(!files.contains(&"y.txt".to_string()));
     }
 }

@@ -23,13 +23,20 @@ pub enum ConfigError {
     PreflightMissingCommand(String),
     #[error("preflight timeout for '{0}' must be a positive integer")]
     PreflightInvalidTimeout(String),
-    #[error("no release.toml found in '{0}' or any parent directory")]
+    #[error("no cutver.toml or release.toml found in '{0}' or any parent directory")]
     NotFound(String),
+    #[error("no manifests declared: at least one [[manifest]] entry is required")]
+    NoManifestsDeclared,
+    #[error("multiple manifests are marked with primary = true: only one manifest may be primary")]
+    MultiplePrimaryManifests,
+    #[error("conflicting primary manifest: [version] specifies '{0}' but '{1}' is marked as primary")]
+    ConflictingPrimaryManifest(String, String),
 }
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(skip)]
     pub root_dir: PathBuf,
+    #[serde(default)]
     pub version: VersionSection,
     #[serde(default)]
     pub manifest: Vec<Manifest>,
@@ -41,10 +48,34 @@ pub struct Config {
     pub changelog: Changelog,
     #[serde(default)]
     pub git: Git,
+    #[serde(default)]
+    pub hooks: Hooks,
+    #[serde(default)]
+    pub publish: Publish,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Hooks {
+    pub pre_bump: Option<String>,
+    pub post_bump: Option<String>,
+}
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Publish {
+    #[serde(default)]
+    pub push: bool,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    pub default_timeout: Option<u64>,
+}
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct VersionSection {
+    #[serde(alias = "source", default)]
     pub current_source: String,
+    #[serde(default = "default_strategy")]
+    pub strategy: String,
+}
+
+fn default_strategy() -> String {
+    "manual".into()
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -67,6 +98,8 @@ pub enum ManifestKind {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
     pub path: String,
+    #[serde(default)]
+    pub primary: bool,
     #[serde(flatten)]
     pub kind: ManifestKind,
 }
@@ -81,13 +114,19 @@ pub type PreflightSteps = Vec<(String, PreflightCommand)>;
 
 /// Global `[preflight] default_timeout`.
 pub type PreflightDefault = Option<u64>;
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Changelog {
     pub path: Option<String>,
     #[serde(default = "default_format")]
     pub format: String,
     #[serde(default = "default_entry_template")]
     pub entry_template: String,
+    #[serde(default = "default_changelog_mode")]
+    pub mode: String,
+    #[serde(default = "default_include_scopes")]
+    pub include_scopes: bool,
+    #[serde(default = "default_fallback_entry")]
+    pub fallback_entry: String,
 }
 #[derive(Debug, Deserialize)]
 pub struct Git {
@@ -105,6 +144,9 @@ impl Default for Changelog {
             path: None,
             format: default_format(),
             entry_template: default_entry_template(),
+            mode: default_changelog_mode(),
+            include_scopes: default_include_scopes(),
+            fallback_entry: default_fallback_entry(),
         }
     }
 }
@@ -122,6 +164,15 @@ fn default_format() -> String {
     "keep-a-changelog".into()
 }
 fn default_entry_template() -> String {
+    "Maintenance and updates.".into()
+}
+fn default_changelog_mode() -> String {
+    "conventional".into()
+}
+fn default_include_scopes() -> bool {
+    true
+}
+fn default_fallback_entry() -> String {
     "Maintenance and updates.".into()
 }
 fn default_tag_prefix() -> String {
@@ -148,6 +199,7 @@ pub fn load(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
     config.preflight_default_timeout = default_timeout;
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     config.root_dir = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    deduce_current_source(&mut config)?;
     config.version.current_source = resolve(&config.root_dir, &config.version.current_source);
     for m in &mut config.manifest {
         m.path = resolve(&config.root_dir, &m.path);
@@ -168,9 +220,13 @@ pub fn discover(start_dir: impl AsRef<Path>) -> Result<Config, ConfigError> {
     let start = canonicalize(&start).unwrap_or(start);
     let mut dir = Some(start.as_path());
     while let Some(d) = dir {
-        let candidate = d.join("release.toml");
-        if candidate.is_file() {
-            return load(candidate);
+        let cutver_candidate = d.join("cutver.toml");
+        if cutver_candidate.is_file() {
+            return load(cutver_candidate);
+        }
+        let release_candidate = d.join("release.toml");
+        if release_candidate.is_file() {
+            return load(release_candidate);
         }
         if d.join(".git").exists() {
             break;
@@ -270,6 +326,35 @@ fn parse_timeout(name: &str, v: &toml_edit::Value) -> Result<u64, ConfigError> {
         .map_err(|_| ConfigError::PreflightInvalidTimeout(name.into()))
 }
 
+fn deduce_current_source(config: &mut Config) -> Result<(), ConfigError> {
+    if config.manifest.is_empty() {
+        return Err(ConfigError::NoManifestsDeclared);
+    }
+    let candidates: Vec<&Manifest> = config.manifest.iter().filter(|m| m.primary).collect();
+    if candidates.len() > 1 {
+        return Err(ConfigError::MultiplePrimaryManifests);
+    }
+    let primary_path = candidates.first().map(|m| m.path.as_str());
+    if config.version.current_source.is_empty() {
+        if let Some(p) = primary_path {
+            config.version.current_source = p.to_string();
+        } else {
+            config.version.current_source = config.manifest[0].path.clone();
+        }
+    } else if let Some(p) = primary_path
+        && config.version.current_source != p
+    {
+        return Err(ConfigError::ConflictingPrimaryManifest(
+            config.version.current_source.clone(),
+            p.to_string(),
+        ));
+    }
+    if config.version.strategy.is_empty() {
+        config.version.strategy = default_strategy();
+    }
+    Ok(())
+}
+
 fn validate(config: &Config) -> Result<(), ConfigError> {
     let mut seen = HashSet::new();
     for m in &config.manifest {
@@ -301,6 +386,7 @@ mod tests {
         c.preflight = p;
         c.preflight_default_timeout = d;
         c.root_dir = std::env::current_dir().unwrap();
+        deduce_current_source(&mut c)?;
         validate(&c)?;
         Ok(c)
     }
@@ -535,5 +621,219 @@ d = { command = "echo d" }
 
         let _ = fs::remove_file(&symlink_dir);
         let _ = fs::remove_file(&symlink_sub);
+    }
+
+    #[test]
+    fn omit_version_uses_first_manifest_as_source() {
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#;
+        let cfg = load_str(toml).unwrap();
+        assert_eq!(cfg.version.current_source, "Cargo.toml");
+        assert_eq!(cfg.version.strategy, "manual");
+    }
+
+    #[test]
+    fn version_source_alias_works() {
+        let toml = r#"
+[version]
+source = "package.json"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+"#;
+        let cfg = load_str(toml).unwrap();
+        assert_eq!(cfg.version.current_source, "package.json");
+    }
+
+    #[test]
+    fn primary_manifest_on_non_first_manifest_uses_it_as_source() {
+        let toml = r#"
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+primary = true
+"#;
+        let cfg = load_str(toml).unwrap();
+        assert_eq!(cfg.version.current_source, "Cargo.toml");
+    }
+
+    #[test]
+    fn multiple_primary_manifests_errors() {
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+primary = true
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+primary = true
+"#;
+        let err = load_str(toml).unwrap_err();
+        assert!(matches!(err, ConfigError::MultiplePrimaryManifests));
+    }
+
+    #[test]
+    fn conflicting_current_source_and_primary_manifest_errors() {
+        let toml = r#"
+[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+primary = true
+"#;
+        let err = load_str(toml).unwrap_err();
+        match err {
+            ConfigError::ConflictingPrimaryManifest(source, primary) => {
+                assert_eq!(source, "package.json");
+                assert_eq!(primary, "Cargo.toml");
+            }
+            other => panic!("expected ConflictingPrimaryManifest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_manifests_returns_no_manifests_declared() {
+        let toml = r#"
+[git]
+tag_prefix = "v"
+"#;
+        let err = load_str(toml).unwrap_err();
+        assert!(matches!(err, ConfigError::NoManifestsDeclared));
+
+        let toml_with_version = r#"
+[version]
+current_source = "Cargo.toml"
+"#;
+        let err = load_str(toml_with_version).unwrap_err();
+        assert!(matches!(err, ConfigError::NoManifestsDeclared));
+    }
+
+    #[test]
+    fn discover_prioritizes_cutver_toml_over_release_toml() {
+        let d = tmp("cutver-cfg-precedence");
+        write(
+            &d,
+            "cutver.toml",
+            "[[manifest]]\npath = \"cutver-manifest\"\nkind = \"cargo-package\"\n",
+        );
+        write(
+            &d,
+            "release.toml",
+            "[[manifest]]\npath = \"release-manifest\"\nkind = \"cargo-package\"\n",
+        );
+        write(&d, "cutver-manifest", "");
+        write(&d, "release-manifest", "");
+
+        let c = discover(&d).unwrap();
+        assert_eq!(
+            c.version.current_source,
+            d.join("cutver-manifest").to_string_lossy().to_string()
+        );
+    }
+
+    #[test]
+    fn discover_falls_back_to_release_toml_when_cutver_toml_absent() {
+        let d = tmp("cutver-cfg-fallback");
+        write(
+            &d,
+            "release.toml",
+            "[[manifest]]\npath = \"release-manifest\"\nkind = \"cargo-package\"\n",
+        );
+        write(&d, "release-manifest", "");
+
+        let c = discover(&d).unwrap();
+        assert_eq!(
+            c.version.current_source,
+            d.join("release-manifest").to_string_lossy().to_string()
+        );
+    }
+
+    #[test]
+    fn changelog_defaults_and_custom_config() {
+        let default_cl = Changelog::default();
+        assert_eq!(default_cl.format, "keep-a-changelog");
+        assert_eq!(default_cl.entry_template, "Maintenance and updates.");
+        assert_eq!(default_cl.mode, "conventional");
+        assert!(default_cl.include_scopes);
+        assert_eq!(default_cl.fallback_entry, "Maintenance and updates.");
+
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+mode = "template"
+include_scopes = false
+fallback_entry = "Custom fallback notes."
+"#;
+        let c = load_str(toml).unwrap();
+        assert_eq!(c.changelog.mode, "template");
+        assert!(!c.changelog.include_scopes);
+        assert_eq!(c.changelog.fallback_entry, "Custom fallback notes.");
+    }
+
+    #[test]
+    fn hooks_and_publish_parsing_and_defaults() {
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[hooks]
+pre_bump = "echo pre"
+post_bump = "cargo check"
+
+[publish]
+push = true
+commands = ["cargo publish", "gh release create v{version}"]
+default_timeout = 60
+"#;
+        let c = load_str(toml).unwrap();
+        assert_eq!(c.hooks.pre_bump.as_deref(), Some("echo pre"));
+        assert_eq!(c.hooks.post_bump.as_deref(), Some("cargo check"));
+        assert!(c.publish.push);
+        assert_eq!(
+            c.publish.commands,
+            vec!["cargo publish", "gh release create v{version}"]
+        );
+        assert_eq!(c.publish.default_timeout, Some(60));
+
+        let default_cfg = load_str(&manifest("cargo-package", "")).unwrap();
+        assert_eq!(default_cfg.hooks.pre_bump, None);
+        assert_eq!(default_cfg.hooks.post_bump, None);
+        assert!(!default_cfg.publish.push);
+        assert!(default_cfg.publish.commands.is_empty());
+        assert_eq!(default_cfg.publish.default_timeout, None);
     }
 }

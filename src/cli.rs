@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "cutver", version, about)]
 pub struct Cli {
-    /// Path to release.toml (defaults to discovering release.toml walking up from current directory)
+    /// Path to configuration file (defaults to discovering cutver.toml or release.toml walking up from current directory)
     #[arg(short, long, global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
     #[command(subcommand)]
@@ -38,6 +38,18 @@ pub enum BumpLevel {
     Minor,
     /// Increment major version (e.g. 1.2.3 -> 2.0.0)
     Major,
+    /// Automatically deduce bump level from Conventional Commits since the latest tag
+    Auto,
+}
+
+impl From<crate::semver_bump::Bump> for BumpLevel {
+    fn from(b: crate::semver_bump::Bump) -> Self {
+        match b {
+            crate::semver_bump::Bump::Patch => BumpLevel::Patch,
+            crate::semver_bump::Bump::Minor => BumpLevel::Minor,
+            crate::semver_bump::Bump::Major => BumpLevel::Major,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +97,32 @@ mod tests {
         assert_eq!(level, BumpLevel::Minor);
         assert!(dry_run);
         assert_eq!(skip_preflight, vec!["tests", "build"]);
+    }
+
+    #[test]
+    fn bump_auto_cli() {
+        let cli = Cli::try_parse_from(["cutver", "bump", "auto"]).unwrap();
+        let Commands::Bump {
+            level,
+            dry_run,
+            skip_preflight,
+        } = cli.command
+        else {
+            panic!("expected bump")
+        };
+        assert_eq!(level, BumpLevel::Auto);
+        assert!(!dry_run);
+        assert!(skip_preflight.is_empty());
+    }
+
+    #[test]
+    fn bump_auto_dry_run() {
+        let cli = Cli::try_parse_from(["cutver", "bump", "auto", "--dry-run"]).unwrap();
+        let Commands::Bump { level, dry_run, .. } = cli.command else {
+            panic!("expected bump")
+        };
+        assert_eq!(level, BumpLevel::Auto);
+        assert!(dry_run);
     }
 
     #[test]
