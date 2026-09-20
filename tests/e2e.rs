@@ -39,7 +39,7 @@ const CHANGELOG_MD: &str = r#"# Changelog
 All notable changes to this project will be documented in this file.
 "#;
 
-fn base_release_toml(preflight: &str) -> String {
+fn base_cutver_toml(preflight: &str) -> String {
     format!(
         r#"[version]
 current_source = "package.json"
@@ -72,7 +72,22 @@ require_clean_tree = true
     )
 }
 
+fn base_release_toml(preflight: &str) -> String {
+    base_cutver_toml(preflight)
+}
+
 fn write_fixture(guard: &FixtureGuard, preflight: &str) {
+    let fixture = guard.fixture();
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", &base_cutver_toml(preflight));
+    init_git_repo(fixture);
+    initial_commit(fixture);
+}
+
+fn write_legacy_release_fixture(guard: &FixtureGuard, preflight: &str) {
     let fixture = guard.fixture();
     fixture.write("package.json", PACKAGE_JSON);
     fixture.write("Cargo.toml", CARGO_TOML);
@@ -112,7 +127,7 @@ fn bump_minor_happy_path() {
         r#"[preflight]
 check = "true""#,
     );
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
     assert!(!summary.dry_run);
@@ -165,7 +180,7 @@ fn bump_aborts_when_preflight_fails() {
         r#"[preflight]
 check = "false""#,
     );
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     assert!(bump_run(&cfg, Bump::Minor, false, &[]).is_err());
     assert_versions_at_123(guard.fixture());
     assert_eq!(commit_count(guard.fixture()), 1);
@@ -184,7 +199,7 @@ fn bump_dry_run_performs_no_mutation() {
         r#"[preflight]
 check = "true""#,
     );
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
     assert!(summary.dry_run);
     assert_versions_at_123(guard.fixture());
@@ -212,7 +227,7 @@ check = "true""#,
         .trim()
         .to_string();
     run_git_ok(&fixture.dir, &["tag", "v1.3.0", &first]);
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
     assert!(err.to_string().contains("v1.3.0"));
     assert_versions_at_123(fixture);
@@ -232,7 +247,7 @@ fn bump_aborts_when_preflight_times_out() {
         r#"[preflight]
 check = { command = "sleep 30", timeout = 2 }"#,
     );
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
     assert!(
         err.to_string().contains("timed out"),
@@ -257,7 +272,7 @@ check = "true""#,
     );
     let fixture = guard.fixture();
     run_git_ok(&fixture.dir, &["tag", "v1.3.0", "HEAD"]);
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, true, &[]).unwrap_err();
     assert!(
         matches!(err, cutver::bump::Error::TagExists { .. }),
@@ -289,7 +304,7 @@ check = "true""#,
     std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
     assert!(
         matches!(err, cutver::bump::Error::Commit(_)),
@@ -319,7 +334,7 @@ fn bump_rolls_back_manifests_when_stage_fails() {
 check = "touch .git/index.lock""#,
     );
     let fixture = guard.fixture();
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let err = bump_run(&cfg, Bump::Minor, false, &[]).unwrap_err();
     assert!(
         matches!(err, cutver::bump::Error::Stage(_)),
@@ -372,7 +387,7 @@ fn discover_from_deep_subdirectory_finds_release_toml() {
         "git CLI is required for e2e tests but was not found in PATH"
     );
     let guard = FixtureGuard::new("deep-subdir-discover");
-    write_fixture(
+    write_legacy_release_fixture(
         &guard,
         r#"[preflight]
 check = "true""#,
@@ -477,6 +492,25 @@ kind = "cargo-package"
 }
 
 #[test]
+fn bump_minor_with_legacy_release_toml_fallback() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("legacy-fallback");
+    write_legacy_release_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let cfg = config::load("release.toml").unwrap();
+    let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+    assert!(!summary.dry_run);
+    assert_bumped(guard.fixture());
+}
+
+#[test]
 fn bump_auto_dry_run_with_feat() {
     assert!(
         git_available(),
@@ -494,7 +528,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "feat: add auto bump support"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, true, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
     assert!(summary.dry_run);
@@ -520,7 +554,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "feat: add auto bump support"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
     assert!(!summary.dry_run);
@@ -549,7 +583,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "feat!: breaking change across system"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "2.0.0");
     assert!(!summary.dry_run);
@@ -581,7 +615,7 @@ check = "true""#,
         ],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "2.0.0");
     assert!(!summary.dry_run);
@@ -610,7 +644,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "some non-conventional commit"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.2.4");
     assert!(!summary.dry_run);
@@ -650,7 +684,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "fix: post-release bugfix"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     // Because the breaking change occurred before v1.2.3 tag, it only inspects commits since v1.2.3,
     // deducing a patch bump to 1.2.4 instead of major.
@@ -683,7 +717,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "fix: resolve memory leak on exit"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     assert_eq!(cfg.changelog.mode, "conventional");
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
@@ -725,7 +759,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "fix: update error message"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "2.0.0");
     assert!(!summary.dry_run);
@@ -756,7 +790,7 @@ check = "true""#,
         &["commit", "--allow-empty", "-m", "feat: manual minor feature"],
     );
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
     assert!(!summary.dry_run);
@@ -804,12 +838,12 @@ entry_template = "Static template notes."
 tag_prefix = "v"
 require_clean_tree = true
 "#;
-    fixture.write("release.toml", toml);
+    fixture.write("cutver.toml", toml);
     init_git_repo(fixture);
     initial_commit(fixture);
     run_git_ok(&fixture.dir, &["commit", "--allow-empty", "-m", "feat: some feature"]);
 
-    let cfg = config::load("release.toml").unwrap();
+    let cfg = config::load("cutver.toml").unwrap();
     let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
     assert_eq!(summary.next.to_string(), "1.3.0");
     let cl = fixture.read("CHANGELOG.md");
