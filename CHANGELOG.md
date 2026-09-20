@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.3.1] - 2026-09-20
+
+### Bug Fixes
+- **publish**: enforce publish.default_timeout and migrate e2e test fixtures (#24)
+
+### Documentation
+- modernize README with freeze SVG demo and author docs/references.md
+
+### Maintenance
+- **config**: configure publish.default_timeout in cutver.toml
+- **config**: automate cargo publish in cutver.toml publish table
 ## [v0.3.0] - 2026-09-20
 
 ### Features
