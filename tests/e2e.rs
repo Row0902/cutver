@@ -7,6 +7,7 @@ use cutver::bump::run as bump_run;
 use cutver::cli::BumpLevel;
 use cutver::config;
 use cutver::semver_bump::Bump;
+use std::process::Command;
 use std::time::SystemTime;
 
 const PACKAGE_JSON: &str = r#"{
@@ -1356,4 +1357,170 @@ commands = ["sleep 5"]
         "unexpected error message: {err_str}"
     );
     assert!(err_str.contains("(limit 1s)"), "unexpected error message: {err_str}");
+}
+
+#[test]
+fn changelog_latest_cli_extracts_body_from_discovered_config() {
+    let guard = FixtureGuard::new("changelog-latest-discovered");
+    let fixture = guard.fixture();
+    let cutver_toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[changelog]
+path = "CHANGELOG.md"
+"#;
+    fixture.write("cutver.toml", cutver_toml);
+    fixture.write("package.json", r#"{"version": "1.2.0"}"#);
+    let changelog_content = r#"# Changelog
+
+## [Unreleased]
+- work in progress
+
+## [1.2.0] - 2026-03-01
+
+### Features
+- new thing
+"#;
+    fixture.write("CHANGELOG.md", changelog_content);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["changelog", "latest"])
+        .output()
+        .expect("failed to execute cutver binary");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    assert!(
+        trimmed.contains("### Features\n- new thing"),
+        "stdout does not contain features: {stdout}"
+    );
+    assert!(
+        !stdout.contains("## [1.2.0]"),
+        "stdout should not contain release header: {stdout}"
+    );
+    assert!(
+        !stdout.contains("[Unreleased]"),
+        "stdout should not contain [Unreleased]: {stdout}"
+    );
+}
+
+#[test]
+fn changelog_latest_cli_with_include_header() {
+    let guard = FixtureGuard::new("changelog-latest-header");
+    let fixture = guard.fixture();
+    let cutver_toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[changelog]
+path = "CHANGELOG.md"
+"#;
+    fixture.write("cutver.toml", cutver_toml);
+    fixture.write("package.json", r#"{"version": "1.2.0"}"#);
+    let changelog_content = r#"# Changelog
+
+## [Unreleased]
+- work in progress
+
+## [1.2.0] - 2026-03-01
+
+### Features
+- new thing
+"#;
+    fixture.write("CHANGELOG.md", changelog_content);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["changelog", "latest", "-H"])
+        .output()
+        .expect("failed to execute cutver binary");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().starts_with("## [1.2.0] - 2026-03-01"),
+        "stdout does not start with header: {stdout}"
+    );
+    assert!(
+        stdout.contains("### Features\n- new thing"),
+        "stdout does not contain features: {stdout}"
+    );
+}
+
+#[test]
+fn changelog_latest_cli_with_explicit_path() {
+    let guard = FixtureGuard::new("changelog-latest-explicit-path");
+    let fixture = guard.fixture();
+    let releases_content = r#"# Releases
+
+## [Unreleased]
+- upcoming changes
+
+## [2.0.0] - 2026-03-01
+
+- custom release notes
+"#;
+    fixture.write("RELEASES.md", releases_content);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["changelog", "latest", "-p", "RELEASES.md"])
+        .output()
+        .expect("failed to execute cutver binary");
+
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "- custom release notes");
+}
+
+#[test]
+fn changelog_latest_cli_fails_cleanly_when_no_releases() {
+    let guard = FixtureGuard::new("changelog-latest-no-releases");
+    let fixture = guard.fixture();
+    let changelog_content = r#"# Changelog
+
+## [Unreleased]
+- work in progress
+"#;
+    fixture.write("CHANGELOG.md", changelog_content);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["changelog", "latest"])
+        .output()
+        .expect("failed to execute cutver binary");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no release section found in changelog"),
+        "stderr does not contain expected error: {stderr}"
+    );
 }

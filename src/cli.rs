@@ -28,6 +28,24 @@ pub enum Commands {
     },
     /// Validate release.toml configuration and report version drift across declared manifests
     Doctor,
+    /// Query or extract entries from the changelog
+    Changelog {
+        #[command(subcommand)]
+        command: ChangelogCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum ChangelogCommands {
+    /// Extract the latest release notes from the changelog
+    Latest {
+        /// Include the release heading (e.g. '## [0.3.1] - 2026-09-20')
+        #[arg(short = 'H', long)]
+        include_header: bool,
+        /// Explicit path to changelog file (defaults to changelog configured in cutver.toml or CHANGELOG.md)
+        #[arg(short, long, value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -129,6 +147,54 @@ mod tests {
     fn doctor_subcommand() {
         let cli = Cli::try_parse_from(["cutver", "doctor"]).unwrap();
         assert!(matches!(cli.command, Commands::Doctor));
+    }
+
+    #[test]
+    fn changelog_latest_defaults() {
+        let cli = Cli::try_parse_from(["cutver", "changelog", "latest"]).unwrap();
+        let Commands::Changelog {
+            command: ChangelogCommands::Latest { include_header, path },
+        } = cli.command
+        else {
+            panic!("expected changelog latest");
+        };
+        assert!(!include_header);
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn changelog_latest_with_options() {
+        let cli = Cli::try_parse_from([
+            "cutver",
+            "changelog",
+            "latest",
+            "--include-header",
+            "--path",
+            "docs/HISTORY.md",
+        ])
+        .unwrap();
+        let Commands::Changelog { command } = cli.command else {
+            panic!("expected changelog");
+        };
+        assert_eq!(
+            command,
+            ChangelogCommands::Latest {
+                include_header: true,
+                path: Some(PathBuf::from("docs/HISTORY.md")),
+            }
+        );
+
+        let cli_short = Cli::try_parse_from(["cutver", "changelog", "latest", "-H", "-p", "custom.md"]).unwrap();
+        let Commands::Changelog { command: command_short } = cli_short.command else {
+            panic!("expected changelog");
+        };
+        assert_eq!(
+            command_short,
+            ChangelogCommands::Latest {
+                include_header: true,
+                path: Some(PathBuf::from("custom.md")),
+            }
+        );
     }
 
     #[test]

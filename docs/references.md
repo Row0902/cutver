@@ -201,6 +201,25 @@ cutver doctor [OPTIONS]
 
 ---
 
+### `cutver changelog latest`
+
+Extracts the latest release notes from the configured changelog file directly to `stdout`. Automatically skips `[Unreleased]` sections and terminates at the next release boundary.
+
+```bash
+cutver changelog latest [OPTIONS]
+```
+
+#### Options
+- `-H, --include-header`: Includes the release title header (e.g. `## [0.3.1] - 2026-09-20`) in the output (default: emits only the markdown body, ideal for `--notes`).
+- `-p, --path <PATH>`: Explicit path to the changelog file (bypasses configuration discovery).
+- `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.
+
+#### Exit Codes
+- `0`: Success. Emitted release notes to `stdout`.
+- `1`: File read error, missing changelog, or no release section found.
+
+---
+
 ## Two-Phase Atomic Architecture & Safety
 
 1. **Guard Phase**: Asserts `git` tree is clean and matches `require_branch`. Validates that the target release tag does not already exist locally or remotely.
