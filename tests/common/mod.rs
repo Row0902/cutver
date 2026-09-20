@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn tmp_id(prefix: &str) -> String {
@@ -9,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -146,4 +149,110 @@ pub fn head_commit_files(fixture: &Fixture) -> Vec<String> {
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+pub const PACKAGE_JSON: &str = r#"{
+  "name": "cutver-e2e",
+  "version": "1.2.3"
+}
+"#;
+
+pub const CARGO_TOML: &str = r#"[package]
+name = "cutver-e2e"
+version = "1.2.3"
+edition = "2024"
+"#;
+
+pub const GRADLE_KTS: &str = r#"plugins {
+    id("com.android.application")
+}
+
+android {
+    defaultConfig {
+        versionName "1.2.3"
+        versionCode 42
+        applicationId = "com.example.app"
+    }
+}
+"#;
+
+pub const CHANGELOG_MD: &str = r#"# Changelog
+
+All notable changes to this project will be documented in this file.
+"#;
+
+pub fn base_cutver_toml(preflight: &str) -> String {
+    format!(
+        r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[[manifest]]
+path = "android/build.gradle.kts"
+kind = "gradle"
+version_name_field = "versionName"
+version_code_field = "versionCode"
+
+{preflight}
+
+[changelog]
+path = "CHANGELOG.md"
+entry_template = "Maintenance and updates."
+
+[git]
+tag_prefix = "v"
+require_clean_tree = true
+"#
+    )
+}
+
+pub fn base_release_toml(preflight: &str) -> String {
+    base_cutver_toml(preflight)
+}
+
+pub fn write_fixture(guard: &FixtureGuard, preflight: &str) {
+    let fixture = guard.fixture();
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", &base_cutver_toml(preflight));
+    init_git_repo(fixture);
+    initial_commit(fixture);
+}
+
+pub fn write_legacy_release_fixture(guard: &FixtureGuard, preflight: &str) {
+    let fixture = guard.fixture();
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("android/build.gradle.kts", GRADLE_KTS);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("release.toml", &base_release_toml(preflight));
+    init_git_repo(fixture);
+    initial_commit(fixture);
+}
+
+pub fn assert_versions_at_123(fixture: &Fixture) {
+    assert!(fixture.read("package.json").contains("\"version\": \"1.2.3\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.2.3\""));
+    let gradle = fixture.read("android/build.gradle.kts");
+    assert!(gradle.contains("versionName \"1.2.3\"") && gradle.contains("versionCode 42"));
+}
+
+pub fn assert_bumped(fixture: &Fixture) {
+    assert!(fixture.read("package.json").contains("\"version\": \"1.3.0\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"1.3.0\""));
+    let gradle = fixture.read("android/build.gradle.kts");
+    assert!(gradle.contains("versionName \"1.3.0\"") && gradle.contains("versionCode 43"));
+    let changelog = fixture.read("CHANGELOG.md");
+    let today = cutver::changelog::format_date(SystemTime::now());
+    assert!(changelog.contains(&format!("## [v1.3.0] - {today}")));
 }
