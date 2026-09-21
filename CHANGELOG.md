@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.0] - 2026-09-21
+
+## What's Changed in v0.5.0
+
+### 🚀 Features & Enhancements
+- **git**: respect .mailmap and resolve GitHub handles from noreply emails
+- **changelog**: dynamic release notes templating with MiniJinja (#42) (#44)
+
+### 🧰 Maintenance & Dependencies
+- **config**: adopt MiniJinja release notes template in cutver.toml and release.yml
+- **release**: prepend 'What's Changed' header and append full changelog link in release.yml (#41)
+
+### 🔍 Other Changes
+- **template**: trim whitespace on release notes template blocks
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Diff**: https://github.com/Row0902/cutver/compare/v0.4.0...v0.5.0
 ## [v0.4.0] - 2026-09-21
 
 ### Features
