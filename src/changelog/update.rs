@@ -26,7 +26,6 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
     }
 
     let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
-
     let section = if template.is_empty() {
         format!("{}\n\n- Unreleased\n", heading)
     } else {

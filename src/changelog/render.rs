@@ -1,12 +1,97 @@
+use super::Error;
+use super::context::ReleaseContext;
 use crate::config::Changelog;
 use crate::conventional::ConventionalCommit;
+use std::fs;
+use std::path::Path;
 
-/// Render the Keep-a-Changelog section body for a release based on `config` and parsed `commits`.
-pub fn render_body(config: &Changelog, commits: &[ConventionalCommit]) -> String {
-    if config.mode == "template" {
-        return config.entry_template.trim().to_string();
+/// Render release notes using a MiniJinja template string and release context.
+pub fn render_template(template_str: &str, context: &ReleaseContext) -> Result<String, Error> {
+    let mut env = minijinja::Environment::new();
+    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    let val = minijinja::Value::from_serialize(context);
+    let rendered = env.render_str(template_str, val).map_err(|e| Error::TemplateRender {
+        detail: format!("{e:#}"),
+    })?;
+    Ok(rendered.trim().to_string())
+}
+
+/// Render the Keep-a-Changelog section body for a release based on `config`, parsed `commits`,
+/// and an optional authoritative `ReleaseContext`.
+pub fn render_body(
+    config: &Changelog,
+    commits: &[ConventionalCommit],
+    context_override: Option<&ReleaseContext>,
+) -> String {
+    if config.template.is_some() || config.template_file.is_some() || config.mode == "template" {
+        let template_str = if let Some(ref t) = config.template {
+            t.clone()
+        } else if let Some(ref file_path) = config.template_file {
+            let p = Path::new(file_path);
+            let full_path = if p.is_relative() {
+                if p.exists() {
+                    p.to_path_buf()
+                } else {
+                    match std::env::current_dir() {
+                        Ok(cd) => cd.join(p),
+                        Err(_) => p.to_path_buf(),
+                    }
+                }
+            } else {
+                p.to_path_buf()
+            };
+            match fs::read_to_string(&full_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    return format!("<!-- Error reading template file '{}': {} -->", full_path.display(), e);
+                }
+            }
+        } else {
+            config.entry_template.clone()
+        };
+
+        let fallback_ctx;
+        let context = match context_override {
+            Some(ctx) => ctx,
+            None => {
+                let today = crate::changelog::format_date(std::time::SystemTime::now());
+                fallback_ctx = super::context::build_context(
+                    "",
+                    None,
+                    "",
+                    None,
+                    &today,
+                    None,
+                    commits,
+                    Vec::new(),
+                    config.include_scopes,
+                    &config.fallback_entry,
+                );
+                &fallback_ctx
+            }
+        };
+
+        match render_template(&template_str, context) {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                format!("<!-- Template render error: {e} -->\n{}", context.all_changes)
+            }
+        }
+    } else {
+        render_conventional(config, commits)
     }
+}
 
+/// Render the Keep-a-Changelog section body for a release using an authoritative `ReleaseContext`.
+pub fn render_body_with_context(
+    config: &Changelog,
+    commits: &[ConventionalCommit],
+    context: &ReleaseContext,
+) -> String {
+    render_body(config, commits, Some(context))
+}
+
+fn render_conventional(config: &Changelog, commits: &[ConventionalCommit]) -> String {
     struct Category {
         header: &'static str,
         items: Vec<String>,
@@ -84,6 +169,58 @@ pub fn render_body(config: &Changelog, commits: &[ConventionalCommit]) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::changelog::build_context;
+
+    #[test]
+    fn test_render_template_basic() {
+        let commits = vec![
+            ConventionalCommit::parse("feat(ui): cool button").unwrap(),
+            ConventionalCommit::parse("fix: crash on start").unwrap(),
+        ];
+        let ctx = build_context(
+            "1.0.0",
+            None,
+            "v1.0.0",
+            None,
+            "2026-03-30",
+            None,
+            &commits,
+            vec!["Alice".into()],
+            true,
+            "Maintenance and updates.",
+        );
+
+        let tpl = "Release {{ version }} ({{ date }}):\n{{ features }}\n{{ fixes }}";
+        let res = render_template(tpl, &ctx).unwrap();
+        assert_eq!(
+            res,
+            "Release 1.0.0 (2026-03-30):\n- **ui**: cool button\n- crash on start"
+        );
+    }
+
+    #[test]
+    fn test_render_template_no_html_escape() {
+        let commits = vec![ConventionalCommit::parse("feat: add <script> & *markdown* tags").unwrap()];
+        let ctx = build_context(
+            "1.0.0",
+            None,
+            "v1.0.0",
+            None,
+            "2026-03-30",
+            Some("https://github.com/Row0902/cutver".into()),
+            &commits,
+            vec![],
+            true,
+            "Maintenance and updates.",
+        );
+
+        let tpl = "Changes:\n{{ features }}\nCompare: <{{ repository }}>";
+        let res = render_template(tpl, &ctx).unwrap();
+        // Crucial invariant: characters must not be HTML escaped (< > &)
+        assert!(res.contains("<script>"));
+        assert!(res.contains('&'));
+        assert!(res.contains("<https://github.com/Row0902/cutver>"));
+    }
 
     #[test]
     fn test_render_body_template_mode() {
@@ -93,8 +230,56 @@ mod tests {
             ..Default::default()
         };
         let commits = vec![ConventionalCommit::parse("feat: something").unwrap()];
-        let body = render_body(&config, &commits);
+        let body = render_body(&config, &commits, None);
         assert_eq!(body, "Static release notes template.");
+    }
+
+    #[test]
+    fn test_render_body_inline_template() {
+        let config = Changelog {
+            template: Some("Version {{ version }}:\n{{ features }}".into()),
+            ..Default::default()
+        };
+        let commits = vec![ConventionalCommit::parse("feat: new cool thing").unwrap()];
+        let ctx = build_context(
+            "1.0.0",
+            None,
+            "v1.0.0",
+            None,
+            "2026-03-30",
+            None,
+            &commits,
+            vec![],
+            true,
+            "Maintenance and updates.",
+        );
+        let body = render_body(&config, &commits, Some(&ctx));
+        assert!(body.starts_with("Version 1.0.0"));
+        assert!(body.contains("- new cool thing"));
+    }
+
+    #[test]
+    fn test_render_body_with_context_helper() {
+        let config = Changelog {
+            template: Some("Version {{ version }}:\n{{ features }}".into()),
+            ..Default::default()
+        };
+        let commits = vec![ConventionalCommit::parse("feat: helper feature").unwrap()];
+        let ctx = build_context(
+            "2.5.0",
+            None,
+            "v2.5.0",
+            None,
+            "2026-03-30",
+            None,
+            &commits,
+            vec![],
+            true,
+            "Maintenance and updates.",
+        );
+        let body = render_body_with_context(&config, &commits, &ctx);
+        assert!(body.starts_with("Version 2.5.0"));
+        assert!(body.contains("- helper feature"));
     }
 
     #[test]
@@ -110,7 +295,7 @@ mod tests {
             ConventionalCommit::parse("custom: something else").unwrap(),
             ConventionalCommit::parse("feat!: breaking change").unwrap(),
         ];
-        let body = render_body(&config, &commits);
+        let body = render_body(&config, &commits, None);
         let expected = "\
 ### ⚠️ Breaking Changes
 - breaking change
@@ -149,7 +334,7 @@ mod tests {
             include_scopes: true,
             ..Default::default()
         };
-        let body_with_scopes = render_body(&config_with_scopes, &commits);
+        let body_with_scopes = render_body(&config_with_scopes, &commits, None);
         assert!(body_with_scopes.contains("- **core**: parser rewrite"));
         assert!(body_with_scopes.contains("- general fix"));
 
@@ -157,7 +342,7 @@ mod tests {
             include_scopes: false,
             ..Default::default()
         };
-        let body_without_scopes = render_body(&config_without_scopes, &commits);
+        let body_without_scopes = render_body(&config_without_scopes, &commits, None);
         assert!(body_without_scopes.contains("- parser rewrite"));
         assert!(!body_without_scopes.contains("**core**"));
     }
@@ -168,7 +353,7 @@ mod tests {
             fallback_entry: "Custom fallback notes.".into(),
             ..Default::default()
         };
-        let body = render_body(&config, &[]);
+        let body = render_body(&config, &[], None);
         assert_eq!(body, "- Custom fallback notes.");
     }
 }

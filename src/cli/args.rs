@@ -61,6 +61,9 @@ pub enum ChangelogCommands {
         /// Explicit path to changelog file (defaults to changelog configured in cutver.toml or CHANGELOG.md)
         #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
+        /// Optional path to an arbitrary MiniJinja template file to format the output
+        #[arg(long, value_name = "PATH")]
+        template: Option<PathBuf>,
     },
     /// Extract release notes for a specific version from the changelog
     Show {
@@ -73,6 +76,9 @@ pub enum ChangelogCommands {
         /// Explicit path to changelog file (defaults to changelog configured in cutver.toml or CHANGELOG.md)
         #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
+        /// Optional path to an arbitrary MiniJinja template file to format the output
+        #[arg(long, value_name = "PATH")]
+        template: Option<PathBuf>,
     },
 }
 
@@ -199,13 +205,19 @@ mod tests {
     fn changelog_latest_defaults() {
         let cli = Cli::try_parse_from(["cutver", "changelog", "latest"]).unwrap();
         let Commands::Changelog {
-            command: ChangelogCommands::Latest { include_header, path },
+            command:
+                ChangelogCommands::Latest {
+                    include_header,
+                    path,
+                    template,
+                },
         } = cli.command
         else {
             panic!("expected changelog latest");
         };
         assert!(!include_header);
         assert!(path.is_none());
+        assert!(template.is_none());
     }
 
     #[test]
@@ -217,6 +229,8 @@ mod tests {
             "--include-header",
             "--path",
             "docs/HISTORY.md",
+            "--template",
+            "release.j2",
         ])
         .unwrap();
         let Commands::Changelog { command } = cli.command else {
@@ -227,6 +241,7 @@ mod tests {
             ChangelogCommands::Latest {
                 include_header: true,
                 path: Some(PathBuf::from("docs/HISTORY.md")),
+                template: Some(PathBuf::from("release.j2")),
             }
         );
 
@@ -239,6 +254,7 @@ mod tests {
             ChangelogCommands::Latest {
                 include_header: true,
                 path: Some(PathBuf::from("custom.md")),
+                template: None,
             }
         );
     }
@@ -252,6 +268,7 @@ mod tests {
                     version,
                     include_header,
                     path,
+                    template,
                 },
         } = cli.command
         else {
@@ -260,6 +277,7 @@ mod tests {
         assert_eq!(version, "0.2.0");
         assert!(!include_header);
         assert!(path.is_none());
+        assert!(template.is_none());
     }
 
     #[test]
@@ -272,6 +290,8 @@ mod tests {
             "--include-header",
             "--path",
             "docs/HISTORY.md",
+            "--template",
+            "notes.j2",
         ])
         .unwrap();
         let Commands::Changelog { command } = cli.command else {
@@ -283,6 +303,7 @@ mod tests {
                 version: "v1.0.0".to_string(),
                 include_header: true,
                 path: Some(PathBuf::from("docs/HISTORY.md")),
+                template: Some(PathBuf::from("notes.j2")),
             }
         );
 
@@ -296,6 +317,7 @@ mod tests {
                 version: "0.3.1".to_string(),
                 include_header: true,
                 path: Some(PathBuf::from("custom.md")),
+                template: None,
             }
         );
     }

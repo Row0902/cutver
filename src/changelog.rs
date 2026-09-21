@@ -2,13 +2,17 @@ use crate::atomic;
 use std::io;
 use thiserror::Error;
 
+mod context;
 mod extract;
 mod render;
 mod update;
 
+pub use context::{CommitContext, ReleaseContext, build_context, build_context_auto};
 pub use extract::{extract_latest, extract_version, list_versions, read_latest, read_version};
-pub use render::render_body;
+pub use render::{render_body, render_body_with_context, render_template};
 pub use update::{format_date, update};
+
+pub type ChangelogError = Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -28,4 +32,12 @@ pub enum Error {
     NoReleaseSection { path: String },
     #[error("version '{version}' not found in changelog '{path}'")]
     VersionNotFound { version: String, path: String },
+    #[error("failed to render changelog template: {detail}")]
+    TemplateRender { detail: String },
+    #[error("failed to read template file '{path}': {source}")]
+    TemplateFileRead {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
 }

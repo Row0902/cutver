@@ -297,20 +297,25 @@ pub fn latest_tag(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Op
 }
 
 pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<String>, Error> {
-    let range;
-    let mut args = vec!["log"];
-    if let Some(t) = tag {
-        range = format!("{t}..HEAD");
-        args.push(&range);
+    commits_between(repo, tag, "HEAD")
+}
+
+pub fn commits_between(repo: impl AsRef<Path>, from_tag: Option<&str>, to_ref: &str) -> Result<Vec<String>, Error> {
+    let mut args = vec!["log".to_string()];
+    if let Some(t) = from_tag {
+        args.push(format!("{t}..{to_ref}"));
+    } else if to_ref != "HEAD" {
+        args.push(to_ref.to_string());
     }
-    args.push("--format=%B%x00");
-    let output = run_git(&repo, &args)?;
+    args.push("--format=%B%x00".to_string());
+    let str_args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(&repo, &str_args)?;
     if !output.status.success() {
-        if tag.is_none() {
+        if from_tag.is_none() {
             return Ok(Vec::new());
         }
         return Err(Error::Status {
-            command: args.join(" "),
+            command: str_args.join(" "),
             status: output.status,
         });
     }
@@ -323,6 +328,79 @@ pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<St
         .filter(|s| !s.is_empty())
         .collect();
     Ok(commits)
+}
+
+pub fn list_authors_since(dir: &Path, tag: Option<&str>) -> io::Result<Vec<String>> {
+    list_authors_between(dir, tag, "HEAD")
+}
+
+pub fn list_authors_between(dir: &Path, from_tag: Option<&str>, to_ref: &str) -> io::Result<Vec<String>> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir).arg("log");
+    let range;
+    if let Some(t) = from_tag {
+        range = format!("{t}..{to_ref}");
+        cmd.arg(&range);
+    } else if to_ref != "HEAD" {
+        cmd.arg(to_ref);
+    }
+    cmd.arg("--format=%an");
+    let output = cmd.output()?;
+    if !output.status.success() {
+        if from_tag.is_none() {
+            return Ok(Vec::new());
+        }
+        return Err(io::Error::other(format!(
+            "git log failed with status {}",
+            output.status
+        )));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut seen = std::collections::HashSet::new();
+    let mut authors = Vec::new();
+    for line in text.lines() {
+        let name = line.trim();
+        if !name.is_empty() && seen.insert(name.to_string()) {
+            authors.push(name.to_string());
+        }
+    }
+    Ok(authors)
+}
+
+pub fn remote_url(repo: impl AsRef<Path>) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(normalize_repo_url(trimmed))
+}
+
+pub fn normalize_repo_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let mut normalized = if let Some(stripped) = trimmed.strip_prefix("git@") {
+        if let Some((host, path)) = stripped.split_once(':') {
+            format!("https://{host}/{path}")
+        } else {
+            trimmed.to_string()
+        }
+    } else if let Some(stripped) = trimmed.strip_prefix("ssh://git@") {
+        format!("https://{stripped}")
+    } else {
+        trimmed.to_string()
+    };
+    if let Some(stripped) = normalized.strip_suffix(".git") {
+        normalized = stripped.to_string();
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -627,5 +705,48 @@ mod tests {
         assert!(files.contains(&"x".to_string()));
         // Untracked files must NEVER be returned
         assert!(!files.contains(&"y.txt".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_repo_url() {
+        assert_eq!(
+            normalize_repo_url("git@github.com:Row0902/cutver.git"),
+            "https://github.com/Row0902/cutver"
+        );
+        assert_eq!(
+            normalize_repo_url("git@gitlab.com:org/sub/repo.git"),
+            "https://gitlab.com/org/sub/repo"
+        );
+        assert_eq!(
+            normalize_repo_url("https://github.com/Row0902/cutver.git"),
+            "https://github.com/Row0902/cutver"
+        );
+        assert_eq!(
+            normalize_repo_url("https://github.com/Row0902/cutver"),
+            "https://github.com/Row0902/cutver"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn test_list_authors_since_and_between() {
+        let dir = tmp_repo();
+        let authors = list_authors_since(&dir, None).unwrap();
+        assert_eq!(authors, vec!["T".to_string()]);
+
+        git(&dir, &["tag", "v1.0.0"]);
+        let authors_since = list_authors_since(&dir, Some("v1.0.0")).unwrap();
+        assert!(authors_since.is_empty());
+
+        // New commit by another author
+        fs::write(dir.join("x"), "c2").unwrap();
+        Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "-am", "c2", "--author=Alice <a@e.com>", "-q"])
+            .status()
+            .unwrap();
+
+        let authors_new = list_authors_since(&dir, Some("v1.0.0")).unwrap();
+        assert_eq!(authors_new, vec!["Alice".to_string()]);
     }
 }
