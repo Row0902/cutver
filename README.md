@@ -55,9 +55,21 @@ Download cryptographic Cosign-signed binaries directly from [GitHub Releases](ht
 
 ---
 
-### 2. Configure `cutver.toml`
+### 2. Initialize or Configure `cutver.toml`
 
-Add a minimal `cutver.toml` to your project root. By convention, the first declared manifest serves as the primary source of truth:
+Run `cutver init` to automatically discover your project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, Gradle, Tauri, etc.) and generate an idiomatic `cutver.toml` and starter `CHANGELOG.md`:
+
+```bash
+cutver init
+```
+
+If you add new manifests or sub-crates later, update your existing configuration without losing custom settings:
+
+```bash
+cutver init --update
+```
+
+A generated `cutver.toml` configures conventional bumping and manifests automatically. By convention, the first declared manifest serves as the primary source of truth:
 
 ```toml
 [[manifest]]

@@ -14,6 +14,18 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Initialize a new cutver.toml configuration by discovering project manifests
+    Init {
+        /// Update an existing cutver.toml with newly discovered manifests without overwriting settings
+        #[arg(short, long)]
+        update: bool,
+        /// Overwrite existing configuration file if present
+        #[arg(short, long)]
+        force: bool,
+        /// Target directory to inspect and initialize (defaults to current directory)
+        #[arg(short, long, value_name = "DIR")]
+        path: Option<PathBuf>,
+    },
     /// Synchronize versions across manifests, run preflight checks, update changelog, and create a Git commit and tag
     Bump {
         /// SemVer level to increment
@@ -292,5 +304,38 @@ mod tests {
     fn config_override_global() {
         let cli = Cli::try_parse_from(["cutver", "-c", "other.toml", "doctor"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("other.toml")));
+    }
+
+    #[test]
+    fn init_defaults() {
+        let cli = Cli::try_parse_from(["cutver", "init"]).unwrap();
+        let Commands::Init { update, force, path } = cli.command else {
+            panic!("expected init");
+        };
+        assert!(!update);
+        assert!(!force);
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn init_with_long_flags() {
+        let cli = Cli::try_parse_from(["cutver", "init", "--update", "--force", "--path", "sub/dir"]).unwrap();
+        let Commands::Init { update, force, path } = cli.command else {
+            panic!("expected init");
+        };
+        assert!(update);
+        assert!(force);
+        assert_eq!(path, Some(PathBuf::from("sub/dir")));
+    }
+
+    #[test]
+    fn init_with_short_flags() {
+        let cli = Cli::try_parse_from(["cutver", "init", "-u", "-f", "-p", "sub/dir"]).unwrap();
+        let Commands::Init { update, force, path } = cli.command else {
+            panic!("expected init");
+        };
+        assert!(update);
+        assert!(force);
+        assert_eq!(path, Some(PathBuf::from("sub/dir")));
     }
 }

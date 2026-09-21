@@ -6,6 +6,13 @@ use crate::config;
 
 pub fn run(args: Cli) -> i32 {
     match args.command {
+        Commands::Init { update, force, path } => match crate::init::run_init(path, update, force) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
         Commands::Changelog { command } => run_changelog(args.config.as_deref(), command),
         Commands::Doctor { check_changelog } => {
             let config = match load_config(args.config) {
@@ -850,5 +857,23 @@ field = "version"
             path: Some(cl),
         };
         assert_eq!(run_changelog(None, cmd), 0);
+    }
+
+    #[test]
+    fn run_init_success_and_fail_on_collision() {
+        let dir = temp_dir("cutver-runner-init");
+        write(&dir, "Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+
+        let args = Cli::try_parse_from(["cutver", "init", "-p", &dir.to_string_lossy()]).unwrap();
+        assert_eq!(run(args), 0);
+        assert!(dir.join("cutver.toml").is_file());
+
+        // Second run without force should fail
+        let args_fail = Cli::try_parse_from(["cutver", "init", "-p", &dir.to_string_lossy()]).unwrap();
+        assert_eq!(run(args_fail), 1);
+
+        // Third run with force should succeed
+        let args_force = Cli::try_parse_from(["cutver", "init", "-p", &dir.to_string_lossy(), "--force"]).unwrap();
+        assert_eq!(run(args_force), 0);
     }
 }

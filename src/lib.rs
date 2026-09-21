@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod conventional;
 pub mod git;
+pub mod init;
 pub mod manifest;
 pub mod preflight;
 pub mod semver_bump;
