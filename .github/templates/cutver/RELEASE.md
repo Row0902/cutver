@@ -31,12 +31,6 @@
 ### 🔍 Other Changes
 {{ other }}
 {% endif -%}
-{% if contributors %}
-### 👥 Contributors
-{% for author in contributors -%}
-- @{{ author }}
-{% endfor -%}
-{% endif -%}
 {% if compare_url %}
 ---
 **Full Diff**: {{ compare_url }}
