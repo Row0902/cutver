@@ -330,13 +330,29 @@ pub fn commits_between(repo: impl AsRef<Path>, from_tag: Option<&str>, to_ref: &
     Ok(commits)
 }
 
+pub fn resolve_author(name: &str, email: &str) -> String {
+    let email = email.trim().trim_matches(|c| c == '<' || c == '>');
+    let domain = "@users.noreply.github.com";
+    if email.len() >= domain.len() && email[email.len() - domain.len()..].eq_ignore_ascii_case(domain) {
+        let user_part = &email[..email.len() - domain.len()];
+        let handle = match user_part.split_once('+') {
+            Some((_, after_plus)) => after_plus,
+            None => user_part,
+        };
+        if !handle.is_empty() {
+            return handle.to_string();
+        }
+    }
+    name.trim().to_string()
+}
+
 pub fn list_authors_since(dir: &Path, tag: Option<&str>) -> io::Result<Vec<String>> {
     list_authors_between(dir, tag, "HEAD")
 }
 
 pub fn list_authors_between(dir: &Path, from_tag: Option<&str>, to_ref: &str) -> io::Result<Vec<String>> {
     let mut cmd = Command::new("git");
-    cmd.current_dir(dir).arg("log");
+    cmd.current_dir(dir).arg("log").arg("--use-mailmap");
     let range;
     if let Some(t) = from_tag {
         range = format!("{t}..{to_ref}");
@@ -344,7 +360,7 @@ pub fn list_authors_between(dir: &Path, from_tag: Option<&str>, to_ref: &str) ->
     } else if to_ref != "HEAD" {
         cmd.arg(to_ref);
     }
-    cmd.arg("--format=%an");
+    cmd.arg("--format=%aN\t%aE");
     let output = cmd.output()?;
     if !output.status.success() {
         if from_tag.is_none() {
@@ -359,9 +375,16 @@ pub fn list_authors_between(dir: &Path, from_tag: Option<&str>, to_ref: &str) ->
     let mut seen = std::collections::HashSet::new();
     let mut authors = Vec::new();
     for line in text.lines() {
-        let name = line.trim();
-        if !name.is_empty() && seen.insert(name.to_string()) {
-            authors.push(name.to_string());
+        if line.trim().is_empty() {
+            continue;
+        }
+        let (name, email) = match line.split_once('\t') {
+            Some((n, e)) => (n, e),
+            None => (line, ""),
+        };
+        let author = resolve_author(name, email);
+        if !author.is_empty() && seen.insert(author.clone()) {
+            authors.push(author);
         }
     }
     Ok(authors)
@@ -728,6 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_author() {
+        assert_eq!(
+            resolve_author("Rowell Urbaez Reyes", "167712855+Row0902@users.noreply.github.com"),
+            "Row0902"
+        );
+        assert_eq!(resolve_author("Rowell", "Row0902@users.noreply.github.com"), "Row0902");
+        assert_eq!(resolve_author("Alice Smith", "alice@example.com"), "Alice Smith");
+        assert_eq!(
+            resolve_author("Bob", "12345+octocat@USERS.NOREPLY.GITHUB.COM"),
+            "octocat"
+        );
+        assert_eq!(resolve_author("Fallback", "@users.noreply.github.com"), "Fallback");
+        assert_eq!(
+            resolve_author("Fallback", "12345+@users.noreply.github.com"),
+            "Fallback"
+        );
+        assert_eq!(
+            resolve_author("Charlie", "<167712855+Row0902@users.noreply.github.com>"),
+            "Row0902"
+        );
+    }
+
+    #[test]
     #[cfg_attr(not(unix), ignore)]
     fn test_list_authors_since_and_between() {
         let dir = tmp_repo();
@@ -748,5 +794,69 @@ mod tests {
 
         let authors_new = list_authors_since(&dir, Some("v1.0.0")).unwrap();
         assert_eq!(authors_new, vec!["Alice".to_string()]);
+
+        // Commit with GitHub noreply email (with ID+)
+        fs::write(dir.join("x"), "c3").unwrap();
+        Command::new("git")
+            .current_dir(&dir)
+            .args([
+                "commit",
+                "-am",
+                "c3",
+                "--author=Full Name <167712855+Row0902@users.noreply.github.com>",
+                "-q",
+            ])
+            .status()
+            .unwrap();
+
+        // Commit with GitHub noreply email (without ID+)
+        fs::write(dir.join("x"), "c4").unwrap();
+        Command::new("git")
+            .current_dir(&dir)
+            .args([
+                "commit",
+                "-am",
+                "c4",
+                "--author=Octo Cat <octocat@users.noreply.github.com>",
+                "-q",
+            ])
+            .status()
+            .unwrap();
+
+        // Commit with normal email to be mapped by .mailmap
+        fs::write(dir.join("x"), "c5").unwrap();
+        Command::new("git")
+            .current_dir(&dir)
+            .args(["commit", "-am", "c5", "--author=Old Name <mapped@e.com>", "-q"])
+            .status()
+            .unwrap();
+
+        // Add .mailmap mapping Old Name to New Name
+        fs::write(dir.join(".mailmap"), "New Name <mapped@e.com>\n").unwrap();
+
+        // Another commit by Row0902 to test deduplication
+        fs::write(dir.join("x"), "c6").unwrap();
+        Command::new("git")
+            .current_dir(&dir)
+            .args([
+                "commit",
+                "-am",
+                "c6",
+                "--author=Row0902 <167712855+Row0902@users.noreply.github.com>",
+                "-q",
+            ])
+            .status()
+            .unwrap();
+
+        let authors_after = list_authors_since(&dir, Some("v1.0.0")).unwrap();
+        assert_eq!(
+            authors_after,
+            vec![
+                "Row0902".to_string(),
+                "New Name".to_string(),
+                "octocat".to_string(),
+                "Alice".to_string(),
+            ]
+        );
     }
 }
