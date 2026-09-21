@@ -76,33 +76,46 @@ pub fn run(
     let original_changelog = if let Some(cl_path) = &config.changelog.path {
         let original = if !dry_run { read(cl_path).ok() } else { None };
         if !dry_run {
-            let update_res = if config.changelog.mode == "template" {
-                changelog::update(cl_path, &tag, &config.changelog.entry_template)
-            } else {
-                let commits = match auto_commits {
-                    Some(parsed) => parsed,
-                    None => {
-                        let latest_tag = match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                rollback(&computed, &paths_to_stage, None);
-                                return Err(Error::Git(e));
-                            }
-                        };
-                        let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                rollback(&computed, &paths_to_stage, None);
-                                return Err(Error::Git(e));
-                            }
-                        };
-                        let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
-                        parsed
-                    }
-                };
-                let body = changelog::render_body(&config.changelog, &commits);
-                changelog::update(cl_path, &tag, &body)
+            let latest_tag = match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
+                Ok(t) => t,
+                Err(e) => {
+                    rollback(&computed, &paths_to_stage, None);
+                    return Err(Error::Git(e));
+                }
             };
+            let commits = match auto_commits {
+                Some(parsed) => parsed,
+                None => {
+                    let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            rollback(&computed, &paths_to_stage, None);
+                            return Err(Error::Git(e));
+                        }
+                    };
+                    let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
+                    parsed
+                }
+            };
+            let contributors = git::list_authors_since(repo, latest_tag.as_deref()).unwrap_or_default();
+            let repository = git::remote_url(repo);
+            let today = changelog::format_date(std::time::SystemTime::now());
+            let next_ver = next.to_string();
+            let current_ver = current.to_string();
+            let context = changelog::build_context(
+                &next_ver,
+                Some(&current_ver),
+                &tag,
+                latest_tag.as_deref(),
+                &today,
+                repository,
+                &commits,
+                contributors,
+                config.changelog.include_scopes,
+                &config.changelog.fallback_entry,
+            );
+            let body = changelog::render_body_with_context(&config.changelog, &commits, &context);
+            let update_res = changelog::update(cl_path, &tag, &body);
             if let Err(e) = update_res {
                 rollback(&computed, &paths_to_stage, None);
                 return Err(Error::Changelog(e));

@@ -323,3 +323,64 @@ require_clean_tree = true
     assert!(stdout.contains("### Bug Fixes"));
     assert!(stdout.contains("- fix edge case bug"));
 }
+
+#[test]
+fn test_custom_tag_prefix_and_template_mode() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("cl-custom-prefix-template");
+    let fixture = guard.fixture();
+
+    let cutver_toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[changelog]
+path = "CHANGELOG.md"
+mode = "template"
+entry_template = "Target tag: {{ tag }} | version: {{ version }} | previous: {{ previous_version }}"
+
+[git]
+tag_prefix = "cutver-"
+require_clean_tree = true
+"#;
+    fixture.write("cutver.toml", cutver_toml);
+    fixture.write("package.json", r#"{"version": "1.0.0"}"#);
+    fixture.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [cutver-1.0.0] - 2026-01-01\n\n- Initial release\n",
+    );
+
+    init_git_repo(fixture);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["tag", "cutver-1.0.0"]);
+    run_git_ok(&fixture.dir, &["commit", "--allow-empty", "-m", "feat: new capability"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["bump", "minor"])
+        .output()
+        .expect("failed to execute cutver bump");
+
+    assert!(
+        output.status.success(),
+        "bump command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cl = fixture.read("CHANGELOG.md");
+    assert!(
+        cl.contains("## [cutver-1.1.0] - "),
+        "CHANGELOG.md should contain cutver-1.1.0 heading: {cl}"
+    );
+    assert!(
+        cl.contains("Target tag: cutver-1.1.0 | version: 1.1.0 | previous: 1.0.0"),
+        "CHANGELOG.md should contain rendered template with authoritative context: {cl}"
+    );
+}

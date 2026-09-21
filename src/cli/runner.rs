@@ -153,6 +153,63 @@ fn extract_heading_date(content: &str, target_ver: &str) -> Option<String> {
     None
 }
 
+fn find_raw_heading_version<'a>(content: &'a str, target_ver: &str) -> Option<&'a str> {
+    let target_norm = target_ver.trim_start_matches(['v', 'V']);
+    for line in content.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            let after_h2 = heading.trim_start();
+            let lower = after_h2.to_ascii_lowercase();
+            if lower.starts_with("[unreleased]") || lower.starts_with("unreleased") {
+                continue;
+            }
+            let raw_ver = if after_h2.starts_with('[') {
+                after_h2.find(']').map(|end| after_h2[1..end].trim())
+            } else {
+                after_h2
+                    .split_whitespace()
+                    .next()
+                    .map(|s| s.trim_end_matches(':').trim())
+            };
+            if let Some(raw) = raw_ver
+                && raw.trim_start_matches(['v', 'V']) == target_norm
+            {
+                return Some(raw);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_release_tag_and_prefix(
+    cfg: Option<&config::Config>,
+    root_dir: &Path,
+    content: &str,
+    version: &str,
+) -> (String, String) {
+    let clean_ver = version.trim_start_matches(['v', 'V']);
+    if let Some(c) = cfg {
+        let prefix = c.git.tag_prefix.clone();
+        let tag = format!("{prefix}{clean_ver}");
+        return (tag, prefix);
+    }
+
+    let v_tag = format!("v{clean_ver}");
+    if crate::git::tag_exists(root_dir, &v_tag).unwrap_or(false) {
+        return (v_tag, "v".to_string());
+    }
+    if crate::git::tag_exists(root_dir, clean_ver).unwrap_or(false) {
+        return (clean_ver.to_string(), String::new());
+    }
+
+    if let Some(raw) = find_raw_heading_version(content, clean_ver)
+        && raw.starts_with(['v', 'V'])
+    {
+        return (format!("v{clean_ver}"), "v".to_string());
+    }
+
+    (clean_ver.to_string(), String::new())
+}
+
 pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands) -> i32 {
     match command {
         ChangelogCommands::Latest {
@@ -198,7 +255,6 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
                     .and_then(|p| config::load(p).ok())
                     .or_else(|| std::env::current_dir().ok().and_then(|d| config::discover(d).ok()));
 
-                let tag_prefix = cfg.as_ref().map(|c| c.git.tag_prefix.as_str()).unwrap_or("v");
                 let include_scopes = cfg.as_ref().map(|c| c.changelog.include_scopes).unwrap_or(true);
                 let fallback_entry = cfg
                     .as_ref()
@@ -211,8 +267,9 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
                     .or_else(|| target_path.parent())
                     .unwrap_or(&dummy_root);
 
-                let tag = format!("{tag_prefix}{latest_ver}");
-                let prev_tag = prev_ver.map(|v| format!("{tag_prefix}{v}"));
+                let (tag, _) = resolve_release_tag_and_prefix(cfg.as_ref(), root_dir, &content, latest_ver);
+                let prev_tag =
+                    prev_ver.map(|pv| resolve_release_tag_and_prefix(cfg.as_ref(), root_dir, &content, pv).0);
 
                 let commits_raw = crate::git::commits_since(root_dir, prev_tag.as_deref()).unwrap_or_default();
                 let (_bump, parsed_commits) = crate::conventional::parse_and_deduce_bump(&commits_raw);
@@ -315,7 +372,6 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
                     .and_then(|p| config::load(p).ok())
                     .or_else(|| std::env::current_dir().ok().and_then(|d| config::discover(d).ok()));
 
-                let tag_prefix = cfg.as_ref().map(|c| c.git.tag_prefix.as_str()).unwrap_or("v");
                 let include_scopes = cfg.as_ref().map(|c| c.changelog.include_scopes).unwrap_or(true);
                 let fallback_entry = cfg
                     .as_ref()
@@ -328,8 +384,9 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
                     .or_else(|| target_path.parent())
                     .unwrap_or(&dummy_root);
 
-                let tag = format!("{tag_prefix}{matched_ver}");
-                let prev_tag = prev_ver.map(|v| format!("{tag_prefix}{v}"));
+                let (tag, _) = resolve_release_tag_and_prefix(cfg.as_ref(), root_dir, &content, matched_ver);
+                let prev_tag =
+                    prev_ver.map(|pv| resolve_release_tag_and_prefix(cfg.as_ref(), root_dir, &content, pv).0);
 
                 let commits_raw = crate::git::commits_between(root_dir, prev_tag.as_deref(), &tag).unwrap_or_default();
                 let (_bump, parsed_commits) = crate::conventional::parse_and_deduce_bump(&commits_raw);
