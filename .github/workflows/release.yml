@@ -91,14 +91,7 @@ jobs:
         run: |
           mkdir -p /tmp/cutver-bin
           tar -xzf dist/cutver-*-x86_64-unknown-linux-gnu.tar.gz -C /tmp/cutver-bin
-          echo "## What's Changed" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          /tmp/cutver-bin/cutver-*/cutver changelog latest >> RELEASE_NOTES.md
-          PREV_TAG=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            echo "" >> RELEASE_NOTES.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ github.ref_name }}" >> RELEASE_NOTES.md
-          fi
+          /tmp/cutver-bin/cutver-*/cutver changelog latest > RELEASE_NOTES.md
           echo "=== Generated Release Notes ==="
           cat RELEASE_NOTES.md
       - name: Generate SHA256SUMS
