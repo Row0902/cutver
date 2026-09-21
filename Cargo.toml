@@ -1,6 +1,6 @@
 [package]
 name = "cutver"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 authors = ["Row0902"]
 description = "Cut a release. Bump SemVer. Every project, every language."

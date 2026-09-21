@@ -3,6 +3,29 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.4.0] - 2026-09-21
+
+### Features
+- **cli**: add cutver init for manifest discovery and cutver.toml generation (#38) (#39)
+- **manifest**: native pyproject.toml and modern lockfiles (bun.lock, uv.lock) (#35)
+- **doctor**: validate changelog consistency across git tags (#34)
+- **cli**: add 'cutver changelog show <version>' primitive (#33)
+- **cli**: add 'changelog latest' primitive to extract recent release notes (#26)
+
+### Bug Fixes
+- **git**: annotate init_test_repo with #[cfg(test)] to exclude from release builds (#37)
+
+### Refactoring
+- **cli**: polish diagnostics, error guidance, and dry-run banner with companion tone (#40)
+- **arch**: modularize config, changelog, main, and e2e test suites (#36)
+
+### Documentation
+- **odd**: mark all refactoring tasks completed
+- **odd**: complete tasks for issue #30
+- **odd**: mark PR task as completed in cutver-ci-automate-release-notes.md
+
+### Maintenance
+- **release**: extract notes via cutver changelog latest in release.yml (#27)
 ## [v0.3.1] - 2026-09-20
 
 ### Bug Fixes
