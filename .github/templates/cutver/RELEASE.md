@@ -1,4 +1,4 @@
-## What's Changed in {{ tag }}
+## ✨ What's Changed in {{ tag }}
 {% if breaking %}
 ### ⚠️ Breaking Changes
 {{ breaking }}
