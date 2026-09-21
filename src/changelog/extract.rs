@@ -17,21 +17,18 @@ pub fn extract_latest(content: &str, include_header: bool) -> Option<String> {
 
     for line in content.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
-            if in_release {
-                break;
-            }
-
-            let after_h2 = heading.trim_start();
-            let lower = after_h2.to_ascii_lowercase();
-            let is_unreleased = lower.starts_with("[unreleased]") || lower.starts_with("unreleased");
-
-            if !is_unreleased && !after_h2.is_empty() {
+            if is_release_heading(heading) {
+                if in_release {
+                    break;
+                }
                 in_release = true;
                 if include_header {
                     collected.push(line);
                 }
+                continue;
             }
-        } else if in_release {
+        }
+        if in_release {
             collected.push(line);
         }
     }
@@ -83,17 +80,20 @@ pub fn extract_version(content: &str, target_version: &str, include_header: bool
     for line in content.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
             if in_target {
-                break;
-            }
-
-            if extract_heading_version(heading).is_some_and(|heading_ver| normalize_version(heading_ver) == target_norm)
+                if is_release_heading(heading) {
+                    break;
+                }
+            } else if extract_heading_version(heading)
+                .is_some_and(|heading_ver| normalize_version(heading_ver) == target_norm)
             {
                 in_target = true;
                 if include_header {
                     collected.push(line);
                 }
+                continue;
             }
-        } else if in_target {
+        }
+        if in_target {
             collected.push(line);
         }
     }
@@ -153,6 +153,20 @@ pub fn list_versions(content: &str) -> Vec<String> {
         }
     }
     versions
+}
+
+fn is_release_heading(heading: &str) -> bool {
+    let after_h2 = heading.trim_start();
+    let lower = after_h2.to_ascii_lowercase();
+    if lower.starts_with("[unreleased]") || lower.starts_with("unreleased") {
+        return false;
+    }
+    if let Some(token) = extract_heading_version(heading) {
+        let norm = normalize_version(token);
+        norm.chars().next().is_some_and(|c| c.is_ascii_digit())
+    } else {
+        false
+    }
 }
 
 fn normalize_version(v: &str) -> &str {
