@@ -153,7 +153,7 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
 pub fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_preflight: &[String]) -> i32 {
     match bump::run(config, level, dry_run, skip_preflight) {
         Ok(summary) => {
-            print_summary(&summary);
+            print_bump_summary(&summary);
             0
         }
         Err(e) => {
@@ -169,10 +169,13 @@ pub fn run_doctor(config: &config::Config, check_changelog: bool) -> i32 {
     match bump::doctor(config) {
         Ok(drifts) => {
             if !drifts.is_empty() {
-                eprintln!("Drift detected ({} manifest(s) out of sync):", drifts.len());
+                eprintln!("✖ Version drift detected ({} manifest(s) out of sync):", drifts.len());
                 for Drift { path, expected, actual } in drifts {
-                    eprintln!("  - {path}: expected {expected}, found {actual}");
+                    eprintln!("  • {path}: expected {expected}, found {actual}");
                 }
+                eprintln!("\nSuggested fix:");
+                eprintln!("  • Align version numbers manually across all files.");
+                eprintln!("  • Or run 'cutver bump patch' to synchronize all manifests in one step.");
                 has_drift = true;
             }
         }
@@ -186,19 +189,24 @@ pub fn run_doctor(config: &config::Config, check_changelog: bool) -> i32 {
         match bump::doctor_changelog(config) {
             Ok(cl_drift) => {
                 if !cl_drift.is_empty() {
-                    eprintln!("Changelog drift detected:");
+                    eprintln!("✖ Changelog drift detected:");
                     if !cl_drift.missing_in_changelog.is_empty() {
-                        eprintln!("  Missing in changelog (Git tag exists):");
+                        eprintln!("\n  Missing in changelog (Git tag exists):");
                         for tag in &cl_drift.missing_in_changelog {
-                            eprintln!("    - {tag}");
+                            eprintln!("    • {tag}");
                         }
                     }
                     if !cl_drift.orphan_sections.is_empty() {
-                        eprintln!("  Orphan changelog sections (no Git tag exists):");
+                        eprintln!("\n  Orphan changelog sections (no Git tag exists):");
                         for sec in &cl_drift.orphan_sections {
-                            eprintln!("    - {sec}");
+                            eprintln!("    • {sec}");
                         }
                     }
+                    eprintln!("\nSuggested next steps:");
+                    eprintln!(
+                        "  • Add missing release sections to CHANGELOG.md or query with 'cutver changelog show <version>'."
+                    );
+                    eprintln!("  • Check if orphan versions were tagged with a different prefix or not yet pushed.");
                     has_drift = true;
                 }
             }
@@ -218,7 +226,7 @@ pub fn run_doctor(config: &config::Config, check_changelog: bool) -> i32 {
     } else {
         "cutver.toml"
     };
-    println!("{filename} is valid.");
+    println!("✔ {filename} is valid.");
     println!("  manifests: {}", config.manifest.len());
     println!("  preflight steps: {}", config.preflight.len());
     println!("  current source: {}", config.version.current_source);
@@ -228,8 +236,13 @@ pub fn run_doctor(config: &config::Config, check_changelog: bool) -> i32 {
     0
 }
 
-pub fn print_summary(summary: &Summary) {
-    println!("Bump summary:");
+pub fn print_bump_summary(summary: &Summary) {
+    if summary.dry_run {
+        println!("ℹ Running in simulation mode (--dry-run). No files, commits, or tags will be modified.\n");
+        println!("Release Plan:");
+    } else {
+        println!("✔ Release Plan:");
+    }
     println!("  source: {}", summary.source);
     println!("  current version: {}", summary.current);
     println!("  next version: {}", summary.next);
@@ -237,11 +250,11 @@ pub fn print_summary(summary: &Summary) {
     println!("  preflight commands:");
     for step in &summary.preflight {
         let marker = if step.skipped { " [SKIPPED]" } else { "" };
-        println!("    - {}: {}{}", step.name, step.command, marker);
+        println!("    • {}: {}{}", step.name, step.command, marker);
     }
     println!("  manifests:");
     for t in &summary.touched {
-        println!("    - {}: {} -> {}", t.path, t.old, t.new);
+        println!("    • {}: {} -> {}", t.path, t.old, t.new);
     }
     if let Some(cl) = &summary.changelog {
         println!("  changelog: {cl}");
@@ -261,10 +274,15 @@ pub fn print_summary(summary: &Summary) {
         if !summary.publish_commands.is_empty() {
             println!("    commands:");
             for cmd in &summary.publish_commands {
-                println!("      - {cmd}");
+                println!("      • {cmd}");
             }
         }
     }
+}
+
+#[allow(dead_code)]
+pub fn print_summary(summary: &Summary) {
+    print_bump_summary(summary);
 }
 
 #[cfg(test)]

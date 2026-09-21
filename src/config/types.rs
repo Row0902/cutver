@@ -21,7 +21,9 @@ pub enum ConfigError {
     PreflightMissingCommand(String),
     #[error("preflight timeout for '{0}' must be a positive integer")]
     PreflightInvalidTimeout(String),
-    #[error("no cutver.toml or release.toml found in '{0}' or any parent directory")]
+    #[error(
+        "no cutver.toml or release.toml found in '{0}' or any parent directory.\n  Get started by running:\n    cutver init"
+    )]
     NotFound(String),
     #[error("no manifests declared: at least one [[manifest]] entry is required")]
     NoManifestsDeclared,
