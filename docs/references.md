@@ -66,7 +66,13 @@ path = "CHANGELOG.md"
 format = "keep-a-changelog"       # Keep-a-Changelog standard format
 mode = "conventional"             # "conventional" (parses git commits) or "template"
 entry_template = "Maintenance and updates." # Fallback when mode="template" or no commits found
+template = """                    # Optional: inline MiniJinja template string
+## Release {{ version }} ({{ date }})
+{{ all_changes }}
+"""
+# template_file = "templates/release.j2" # Optional: path to arbitrary template file relative to cutver.toml
 include_scopes = true             # Prefix entries with **scope**: (default: true)
+fallback_entry = "Maintenance and updates." # Fallback bullet entry when no commits match
 
 # Git automation and safety guards
 [git]
@@ -140,6 +146,77 @@ When `mode = "conventional"` is configured in `[changelog]`, release notes in `C
 ### Refactoring
 - deduplicate test setup helpers (#16)
 ```
+
+---
+
+## Dynamic Changelog & Release Notes Templating (MiniJinja)
+
+`cutver` supports expressive, dynamic release notes and changelog templating powered by [MiniJinja](https://github.com/mitsuhiko/minijinja). Templates can be defined inline via `[changelog] template`, loaded from an external file via `[changelog] template_file`, or supplied on the command line via `--template <PATH>`.
+
+Auto-escaping is disabled (`AutoEscape::None`) so Markdown characters (`*`, `<`, `>`, `&`, `#`) are never HTML-escaped.
+
+### Available Template Variables
+
+Every template receives a rich `ReleaseContext` containing metadata, pre-formatted conventional categories, commit objects, and contributors:
+
+| Variable | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `version` | `string` | Target SemVer version without prefix | `"1.3.0"` |
+| `previous_version` | `string \| null` | Previous release version if known | `"1.2.0"` |
+| `tag` | `string` | Target Git tag including configured prefix | `"v1.3.0"` |
+| `previous_tag` | `string \| null` | Previous Git tag if known | `"v1.2.0"` |
+| `date` | `string` | Release date formatted as ISO 8601 `YYYY-MM-DD` | `"2026-03-30"` |
+| `compare_url` | `string \| null` | Remote Git compare diff URL between tags | `"https://github.com/org/repo/compare/v1.2.0...v1.3.0"` |
+| `repository` | `string \| null` | Normalized remote repository URL | `"https://github.com/org/repo"` |
+| `features` | `string` | Pre-formatted bullet items for `feat` commits | `"- **api**: add v2 endpoint"` |
+| `fixes` | `string` | Pre-formatted bullet items for `fix` commits | `"- resolve crash on startup"` |
+| `breaking` | `string` | Pre-formatted bullet items for breaking changes | `"- alter config signature"` |
+| `perf` | `string` | Pre-formatted bullet items for `perf` commits | `"- optimize parser throughput"` |
+| `refactor` | `string` | Pre-formatted bullet items for `refactor` commits | `"- simplify state machine"` |
+| `docs` | `string` | Pre-formatted bullet items for `docs` commits | `"- update usage guide"` |
+| `maintenance` | `string` | Pre-formatted bullet items for `chore`/`build`/`ci`/`test` | `"- bump dependencies"` |
+| `other` | `string` | Pre-formatted bullet items for other types | `"- misc updates"` |
+| `all_changes` | `string` | Complete Keep-a-Changelog block with standard headers | `See example below` |
+| `commits` | `list` | List of commit objects (`type`, `scope`, `description`, `is_breaking`) | `[{ "type": "feat", "scope": "api", ... }]` |
+| `contributors` | `list<string>` | Unique Git author names who committed in this release | `["Alice", "Bob"]` |
+
+### Template Invariants
+
+- **Arbitrary Template Files**: `template_file` accepts any user-defined filename or path (e.g. `templates/notes.j2`, `release.liquid`, `ci/format.tmpl`). Filenames and extensions are never restricted or hardcoded. If relative, paths resolve relative to `config.root_dir` (the directory containing `cutver.toml`).
+- **Backward Compatibility**: If neither `template` nor `template_file` is specified, `cutver` retains standard Keep-a-Changelog conventional rendering.
+
+### Example Template
+
+```jinja
+🚀 Release {{ tag }} ({{ date }})
+
+{% if compare_url %}
+**Full Changelog**: {{ compare_url }}
+{% endif %}
+
+{% if breaking %}
+### ⚠️ Breaking Changes
+{{ breaking }}
+{% endif %}
+
+{% if features %}
+### Features
+{{ features }}
+{% endif %}
+
+{% if fixes %}
+### Bug Fixes
+{{ fixes }}
+{% endif %}
+
+{% if contributors %}
+### Contributors
+{% for author in contributors -%}
+- @{{ author }}
+{% endfor %}
+{% endif %}
+```
+
 
 ---
 
@@ -242,6 +319,7 @@ cutver changelog latest [OPTIONS]
 - `-H, --include-header`: Includes the release title header (e.g. `## [0.3.1] - 2026-09-20`) in the output (default: emits only the markdown body, ideal for `--notes`).
 - `-p, --path <PATH>`: Explicit path to the changelog file (bypasses configuration discovery).
 - `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.
+- `--template <PATH>`: Optional path to an arbitrary MiniJinja template file to format the output.
 
 #### Exit Codes
 - `0`: Success. Emitted release notes to `stdout`.
@@ -264,6 +342,7 @@ cutver changelog show <VERSION> [OPTIONS]
 - `-H, --include-header`: Includes the release title header (e.g. `## [0.2.0] - 2026-09-19`) in the output (default: emits only the markdown body, ideal for `--notes`).
 - `-p, --path <PATH>`: Explicit path to the changelog file (bypasses configuration discovery).
 - `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.
+- `--template <PATH>`: Optional path to an arbitrary MiniJinja template file to format the output.
 
 #### Exit Codes
 - `0`: Success. Emitted release notes to `stdout`.

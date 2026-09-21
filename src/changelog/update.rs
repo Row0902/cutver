@@ -27,10 +27,47 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
 
     let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
 
-    let section = if template.is_empty() {
+    let rendered_storage;
+    let template_body = if template.contains("{{") || template.contains("{%") {
+        let clean_version = version.strip_prefix(['v', 'V']).unwrap_or(version);
+        let tag = if version.starts_with(['v', 'V']) {
+            version.to_string()
+        } else {
+            format!("v{version}")
+        };
+        let date_str = format_date(SystemTime::now());
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let prev_tag = crate::git::latest_tag(parent, Some("v")).ok().flatten();
+        let prev_ver = prev_tag.as_deref().map(|pt| pt.strip_prefix(['v', 'V']).unwrap_or(pt));
+        let contributors = crate::git::list_authors_since(parent, prev_tag.as_deref()).unwrap_or_default();
+        let repository = crate::git::remote_url(parent);
+        let ctx = super::context::build_context(
+            clean_version,
+            prev_ver,
+            &tag,
+            prev_tag.as_deref(),
+            &date_str,
+            repository,
+            &[],
+            contributors,
+            true,
+            "Maintenance and updates.",
+        );
+        match super::render::render_template(template, &ctx) {
+            Ok(s) => {
+                rendered_storage = s;
+                &rendered_storage
+            }
+            Err(_) => template,
+        }
+    } else {
+        template
+    };
+
+    let section = if template_body.is_empty() {
         format!("{}\n\n- Unreleased\n", heading)
     } else {
-        format!("{}\n\n{}\n", heading, template)
+        format!("{}\n\n{}\n", heading, template_body)
     };
 
     let updated = insert_section(&content, &section);
@@ -216,5 +253,13 @@ mod tests {
         update(&path, "v1.1.0", "New notes.").unwrap();
         let after_update = fs::read_to_string(&path).unwrap();
         assert_eq!(after_update, simulated_past);
+    }
+
+    #[test]
+    fn update_renders_minijinja_template() {
+        let path = tmp_file("cutver-cl-minijinja-update");
+        let base = "# Changelog\n";
+        let out = update_file(&path, base, "v2.0.0", "Release {{ version }} notes for {{ tag }}.");
+        assert!(out.contains("Release 2.0.0 notes for v2.0.0."));
     }
 }

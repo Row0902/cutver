@@ -126,16 +126,21 @@ pub type PreflightSteps = Vec<(String, PreflightCommand)>;
 /// Global `[preflight] default_timeout`.
 pub type PreflightDefault = Option<u64>;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Changelog {
+    #[serde(default = "default_changelog_path")]
     pub path: Option<String>,
-    #[serde(default = "default_format")]
+    #[serde(default = "default_changelog_format")]
     pub format: String,
-    #[serde(default = "default_entry_template")]
-    pub entry_template: String,
     #[serde(default = "default_changelog_mode")]
     pub mode: String,
-    #[serde(default = "default_include_scopes")]
+    #[serde(default)]
+    pub entry_template: String,
+    #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub template_file: Option<String>,
+    #[serde(default = "default_true")]
     pub include_scopes: bool,
     #[serde(default = "default_fallback_entry")]
     pub fallback_entry: String,
@@ -144,29 +149,31 @@ pub struct Changelog {
 impl Default for Changelog {
     fn default() -> Self {
         Self {
-            path: None,
-            format: default_format(),
-            entry_template: default_entry_template(),
+            path: default_changelog_path(),
+            format: default_changelog_format(),
             mode: default_changelog_mode(),
-            include_scopes: default_include_scopes(),
+            entry_template: String::new(),
+            template: None,
+            template_file: None,
+            include_scopes: default_true(),
             fallback_entry: default_fallback_entry(),
         }
     }
 }
 
-fn default_format() -> String {
-    "keep-a-changelog".into()
+fn default_changelog_path() -> Option<String> {
+    None
 }
 
-fn default_entry_template() -> String {
-    "Maintenance and updates.".into()
+fn default_changelog_format() -> String {
+    "keep-a-changelog".into()
 }
 
 fn default_changelog_mode() -> String {
     "conventional".into()
 }
 
-fn default_include_scopes() -> bool {
+fn default_true() -> bool {
     true
 }
 
@@ -231,12 +238,14 @@ mod tests {
     fn changelog_defaults_and_custom_config() {
         let default_cl = Changelog::default();
         assert_eq!(default_cl.format, "keep-a-changelog");
-        assert_eq!(default_cl.entry_template, "Maintenance and updates.");
+        assert_eq!(default_cl.entry_template, "");
         assert_eq!(default_cl.mode, "conventional");
         assert!(default_cl.include_scopes);
         assert_eq!(default_cl.fallback_entry, "Maintenance and updates.");
+        assert_eq!(default_cl.template, None);
+        assert_eq!(default_cl.template_file, None);
 
-        let toml = r#"
+        let toml = r####"
 [[manifest]]
 path = "Cargo.toml"
 kind = "cargo-package"
@@ -244,11 +253,15 @@ kind = "cargo-package"
 [changelog]
 path = "CHANGELOG.md"
 mode = "template"
+template = "### Release {{ version }}"
+template_file = "templates/release.j2"
 include_scopes = false
 fallback_entry = "Custom fallback notes."
-"#;
+"####;
         let c = load_str(toml).unwrap();
         assert_eq!(c.changelog.mode, "template");
+        assert_eq!(c.changelog.template.as_deref(), Some("### Release {{ version }}"));
+        assert_eq!(c.changelog.template_file.as_deref(), Some("templates/release.j2"));
         assert!(!c.changelog.include_scopes);
         assert_eq!(c.changelog.fallback_entry, "Custom fallback notes.");
     }
