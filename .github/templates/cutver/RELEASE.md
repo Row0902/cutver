@@ -1,53 +1,43 @@
 ## What's Changed in {{ tag }}
-
 {% if breaking %}
 ### ⚠️ Breaking Changes
 {{ breaking }}
-{% endif %}
-
+{% endif -%}
 {% if features %}
 ### 🚀 Features & Enhancements
 {{ features }}
-{% endif %}
-
+{% endif -%}
 {% if fixes %}
 ### 🐛 Bug Fixes
 {{ fixes }}
-{% endif %}
-
+{% endif -%}
 {% if perf %}
 ### ⚡ Performance Improvements
 {{ perf }}
-{% endif %}
-
+{% endif -%}
 {% if refactor %}
 ### 🛠 Code Refactoring
 {{ refactor }}
-{% endif %}
-
+{% endif -%}
 {% if docs %}
 ### 📚 Documentation
 {{ docs }}
-{% endif %}
-
+{% endif -%}
 {% if maintenance %}
 ### 🧰 Maintenance & Dependencies
 {{ maintenance }}
-{% endif %}
-
+{% endif -%}
 {% if other %}
 ### 🔍 Other Changes
 {{ other }}
-{% endif %}
-
+{% endif -%}
 {% if contributors %}
 ### 👥 Contributors
-{% for author in contributors %}
+{% for author in contributors -%}
 - @{{ author }}
-{% endfor %}
-{% endif %}
-
+{% endfor -%}
+{% endif -%}
 {% if compare_url %}
 ---
 **Full Diff**: {{ compare_url }}
-{% endif %}
+{%- endif %}
