@@ -27,7 +27,9 @@ impl fmt::Display for Step {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("preflight step '{name}' ({command}) failed with status {status}")]
+    #[error(
+        "preflight step '{name}' ({command}) failed with status {status}.\n  The release was aborted safely before modifying any files or creating commits.\n  To bypass this step if non-critical, run:\n    cutver bump auto --skip-preflight {name}"
+    )]
     StepFailed {
         name: String,
         command: String,
