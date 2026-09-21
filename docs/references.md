@@ -174,6 +174,25 @@ Untracked files and arbitrary unstaged source modifications are ignored and left
 
 ## CLI Command Reference
 
+### `cutver init`
+
+Scans project files, detects package manifests, determines the primary source of truth, and scaffolds or updates `cutver.toml` along with a starter `CHANGELOG.md`.
+
+```bash
+cutver init [OPTIONS]
+```
+
+#### Options
+- `-u, --update`: Updates an existing `cutver.toml` by discovering and appending newly added manifests while preserving all existing custom configuration (preflights, git settings, publish hooks, etc.).
+- `-f, --force`: Overwrites `cutver.toml` if it already exists.
+- `-p, --path <DIR>`: Explicit directory to inspect and initialize (defaults to current working directory).
+
+#### Exit Codes
+- `0`: Successfully initialized or updated `cutver.toml`.
+- `1`: Configuration file already exists (without `--update` or `--force`), or an I/O error occurred.
+
+---
+
 ### `cutver bump <LEVEL>`
 
 Executes the release pipeline.
