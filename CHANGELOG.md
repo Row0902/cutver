@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.1] - 2026-09-25
+
+## ✨ What's Changed in v0.5.1
+
+### 🐛 Bug Fixes
+- **changelog**: only break release extraction on versioned headings (#45)
+
+### 🧰 Maintenance & Dependencies
+- automate release pipeline using cutver actions and conditional build matrix
+
+### 🔍 Other Changes
+- **template**: add sparkle emoji to release notes header
+- **template**: restore contributors section in release notes template
+- **template**: remove redundant contributors section from release notes template
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Diff**: https://github.com/cutver/cutver/compare/v0.5.0...v0.5.1
 ## [v0.5.0] - 2026-09-21
 
 ## What's Changed in v0.5.0
