@@ -1,8 +1,9 @@
-name: Release binaries
+name: Cutver CLI
 
 on:
   push:
-    tags: ["v*"]
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -12,8 +13,74 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: Check & Version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      released: ${{ steps.check.outputs.released }}
+      notes: ${{ steps.cutver.outputs.notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git bot credentials
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Cutver CLI
+        uses: cutver/setup@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune floating tags locally
+        run: |
+          git tag -l | grep -E '^v[0-9]+$' | xargs -r git tag -d
+
+      - name: Record HEAD commit before release
+        id: pre
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run Cutver Release
+        id: cutver
+        uses: cutver/release@v1
+        with:
+          command: "release"
+          bump: "auto"
+          check-changelog: "false"
+          notes-file: "RELEASE_NOTES.md"
+          template: ".github/templates/cutver/RELEASE.md"
+
+      - name: Determine if release was produced
+        id: check
+        run: |
+          PRE_SHA="${{ steps.pre.outputs.sha }}"
+          POST_SHA="$(git rev-parse HEAD)"
+          if [ "$PRE_SHA" != "$POST_SHA" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get latest release tag
+        id: tag
+        if: steps.check.outputs.released == 'true'
+        run: echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+
+      - name: Save Release Notes Artifact
+        if: steps.check.outputs.released == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+
   build:
     name: Build ${{ matrix.target }}
+    needs: version
+    if: needs.version.outputs.released == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -36,45 +103,57 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install musl tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Build
         run: cargo build --locked --release --target ${{ matrix.target }}
+
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          TAG="${{ needs.version.outputs.tag }}"
+          VERSION="${TAG#v}"
           OUT="cutver-${VERSION}-${{ matrix.target }}"
           mkdir "$OUT"
           cp target/${{ matrix.target }}/release/cutver "$OUT/"
           tar -czf "${OUT}.tar.gz" "$OUT"
           mkdir -p dist
           mv "${OUT}.tar.gz" dist/
+
       - name: Package (windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $tag = "${{ needs.version.outputs.tag }}"
+          $version = $tag.Substring(1)
           $out = "cutver-$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $out | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/cutver.exe" "$out/"
           Compress-Archive -Path $out -DestinationPath "$out.zip"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Move-Item "$out.zip" dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
           name: asset-${{ matrix.target }}
           path: dist/*
 
-  release:
+  publish:
     name: Upload release assets
-    needs: build
+    needs: [version, build]
+    if: needs.version.outputs.released == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -82,32 +161,42 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v5
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Download all asset artifacts
+        uses: actions/download-artifact@v5
         with:
           path: dist
+          pattern: asset-*
           merge-multiple: true
-      - name: Extract release notes
-        run: |
-          mkdir -p /tmp/cutver-bin
-          tar -xzf dist/cutver-*-x86_64-unknown-linux-gnu.tar.gz -C /tmp/cutver-bin
-          /tmp/cutver-bin/cutver-*/cutver changelog latest > RELEASE_NOTES.md
-          echo "=== Generated Release Notes ==="
-          cat RELEASE_NOTES.md
+
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: release-notes
+          path: ./
+
       - name: Generate SHA256SUMS
         run: |
           cd dist
           sha256sum cutver-* > SHA256SUMS
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
+
       - name: Sign SHA256SUMS with Cosign
         run: |
           cosign sign-blob \
             --yes \
             --bundle dist/SHA256SUMS.bundle \
             dist/SHA256SUMS
+
       - name: Create release and upload binaries
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Release ${{ needs.version.outputs.tag }}
           body_path: RELEASE_NOTES.md
           files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
