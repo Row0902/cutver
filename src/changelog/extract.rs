@@ -137,10 +137,7 @@ pub fn list_versions(content: &str) -> Vec<String> {
     let mut versions = Vec::new();
     for line in content.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
-            let after_h2 = heading.trim_start();
-            let lower = after_h2.to_ascii_lowercase();
-            let is_unreleased = lower.starts_with("[unreleased]") || lower.starts_with("unreleased");
-            if is_unreleased {
+            if !is_release_heading(heading) {
                 continue;
             }
 
