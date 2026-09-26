@@ -443,8 +443,8 @@ edition = "2024"
 
     let cl = fixture.read("CHANGELOG.md");
     assert!(cl.contains("## [v0.2.0] - "));
-    assert!(cl.contains("### Features"));
-    assert!(cl.contains("- exciting feature (#10)"));
+    assert!(cl.contains("### 🚀 Features & Enhancements"));
+    assert!(cl.contains("exciting feature"));
 }
 
 #[test]

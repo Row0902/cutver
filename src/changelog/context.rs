@@ -5,6 +5,7 @@ pub struct CommitContext {
     pub commit_type: String,
     pub scope: Option<String>,
     pub description: String,
+    pub clean_description: String,
     pub is_breaking: bool,
     pub hash: Option<String>,
     pub short_hash: Option<String>,
@@ -22,11 +23,12 @@ impl serde::Serialize for CommitContext {
         S: serde::Serializer,
     {
         use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(13))?;
+        let mut map = serializer.serialize_map(Some(14))?;
         map.serialize_entry("type", &self.commit_type)?;
         map.serialize_entry("commit_type", &self.commit_type)?;
         map.serialize_entry("scope", &self.scope)?;
         map.serialize_entry("description", &self.description)?;
+        map.serialize_entry("clean_description", &self.clean_description)?;
         map.serialize_entry("is_breaking", &self.is_breaking)?;
         map.serialize_entry("hash", &self.hash)?;
         map.serialize_entry("short_hash", &self.short_hash)?;
@@ -52,6 +54,8 @@ impl<'de> serde::Deserialize<'de> for CommitContext {
             scope: Option<String>,
             description: String,
             #[serde(default)]
+            clean_description: Option<String>,
+            #[serde(default)]
             is_breaking: bool,
             #[serde(default)]
             hash: Option<String>,
@@ -71,10 +75,14 @@ impl<'de> serde::Deserialize<'de> for CommitContext {
             commit_url: Option<String>,
         }
         let h = Helper::deserialize(deserializer)?;
+        let clean = h
+            .clean_description
+            .unwrap_or_else(|| strip_trailing_pr_number(&h.description));
         Ok(CommitContext {
             commit_type: h.r#type,
             scope: h.scope,
             description: h.description,
+            clean_description: clean,
             is_breaking: h.is_breaking,
             hash: h.hash,
             short_hash: h.short_hash,
@@ -86,6 +94,19 @@ impl<'de> serde::Deserialize<'de> for CommitContext {
             commit_url: h.commit_url,
         })
     }
+}
+
+pub fn strip_trailing_pr_number(description: &str) -> String {
+    let trimmed = description.trim();
+    if let Some(open_paren) = trimmed.rfind("(#")
+        && trimmed.ends_with(')')
+    {
+        let num_str = &trimmed[open_paren + 2..trimmed.len() - 1];
+        if num_str.chars().all(|c| c.is_ascii_digit()) && !num_str.is_empty() {
+            return trimmed[..open_paren].trim_end().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn extract_pr_number(description: &str, body: Option<&str>) -> Option<u64> {
@@ -240,10 +261,13 @@ pub fn enrich_commit_context(
 
 impl From<&ConventionalCommit> for CommitContext {
     fn from(c: &ConventionalCommit) -> Self {
+        let desc = c.description.trim().to_string();
+        let clean = strip_trailing_pr_number(&desc);
         Self {
             commit_type: c.commit_type.clone(),
             scope: c.scope.clone(),
-            description: c.description.trim().to_string(),
+            description: desc,
+            clean_description: clean,
             is_breaking: c.is_breaking,
             hash: None,
             short_hash: None,
@@ -824,5 +848,30 @@ mod tests {
             Some("2222222222222222222222222222222222222222")
         );
         assert_eq!(ctx.commits[1].author.as_deref(), Some("Bob"));
+    }
+
+    #[test]
+    fn test_clean_description_strips_trailing_pr_number() {
+        assert_eq!(
+            strip_trailing_pr_number("add exciting feature (#42)"),
+            "add exciting feature"
+        );
+        assert_eq!(
+            strip_trailing_pr_number("fix issue with (#12) in core (#99)"),
+            "fix issue with (#12) in core"
+        );
+        assert_eq!(
+            strip_trailing_pr_number("no pr reference in description"),
+            "no pr reference in description"
+        );
+        assert_eq!(
+            strip_trailing_pr_number("invalid pr suffix (#abc)"),
+            "invalid pr suffix (#abc)"
+        );
+
+        let c = ConventionalCommit::parse("feat: add feature (#100)").unwrap();
+        let ctx = CommitContext::from(&c);
+        assert_eq!(ctx.description, "add feature (#100)");
+        assert_eq!(ctx.clean_description, "add feature");
     }
 }

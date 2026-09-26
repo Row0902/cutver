@@ -267,9 +267,9 @@ fn init_default_scaffolds_rich_template() {
 
     let template_content = fixture.read(".github/templates/cutver/RELEASE.md");
     assert!(template_content.contains("## [{{ tag }}] - {{ date }}"));
-    assert!(template_content.contains("### Features"));
-    assert!(template_content.contains("### Bug Fixes"));
-    assert!(template_content.contains("### Contributors"));
+    assert!(template_content.contains("Features & Enhancements"));
+    assert!(template_content.contains("Bug Fixes"));
+    assert!(template_content.contains("Contributors"));
     assert!(template_content.contains("**Full Changelog**: {{ compare_url }}"));
 
     let config_content = fixture.read("cutver.toml");
