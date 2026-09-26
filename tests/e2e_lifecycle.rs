@@ -380,6 +380,69 @@ commands = ["echo published {version} > published.txt"]
 }
 
 #[test]
+fn publish_push_with_floating_major_tag_pushes_floating_tag_to_remote() {
+    assert!(git_available());
+    let guard = FixtureGuard::new("publish-push-floating-tag");
+    let fixture = guard.fixture();
+    let remote = Fixture::new("remote-target-floating-tag");
+    run_git_ok(&remote.dir, &["init", "--bare"]);
+
+    let toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+
+[git]
+tag_prefix = "v"
+floating_major_tag = true
+require_clean_tree = true
+require_branch = "main"
+
+[publish]
+push = true
+"#;
+    fixture.write("package.json", PACKAGE_JSON);
+    fixture.write("Cargo.toml", CARGO_TOML);
+    fixture.write("CHANGELOG.md", CHANGELOG_MD);
+    fixture.write("cutver.toml", toml);
+    init_git_repo(fixture);
+    run_git_ok(&fixture.dir, &["checkout", "-B", "main"]);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["remote", "add", "origin", remote.dir.to_str().unwrap()]);
+
+    let cfg = config::load("cutver.toml").unwrap();
+
+    // Dry run
+    let dry_summary = bump_run(&cfg, Bump::Minor, true, &[]).unwrap();
+    assert!(dry_summary.dry_run);
+    assert!(dry_summary.publish_push);
+    assert_eq!(
+        dry_summary.publish_push_command.as_deref(),
+        Some("git push origin +refs/tags/v1:refs/tags/v1 && git push origin main --tags")
+    );
+
+    // Real run: both v1.3.0 and v1 pushed to remote
+    let real_summary = bump_run(&cfg, Bump::Minor, false, &[]).unwrap();
+    assert!(!real_summary.dry_run);
+    assert_eq!(real_summary.floating_tag.as_deref(), Some("v1"));
+
+    let remote_tags = run_git(&remote.dir, &["tag", "-l"]);
+    let remote_tags_str = String::from_utf8_lossy(&remote_tags.stdout);
+    assert!(remote_tags_str.contains("v1.3.0"));
+    assert!(remote_tags_str.contains("v1"));
+}
+
+#[test]
 fn publish_push_resolves_active_branch_when_require_branch_is_omitted() {
     assert!(git_available());
     let guard = FixtureGuard::new("publish-push-no-require-branch");

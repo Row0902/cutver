@@ -79,6 +79,7 @@ ignore_scopes = ["internal"]      # Exclude commits matching specified scopes (d
 # Git automation and safety guards
 [git]
 tag_prefix = "v"                  # Tag prefix (e.g., "v" -> "v1.2.0")
+floating_major_tag = true         # Automatically create, update, and push floating major tags (e.g., "v1") (default: false)
 commit_message = "chore(release): v{version}"
 require_clean_tree = true         # Fail-safe: refuses to run if uncommitted changes exist
 require_branch = "main"           # Optional: ensures release is only cut from specified branch
@@ -228,6 +229,22 @@ Every template receives a rich `ReleaseContext` containing metadata, pre-formatt
 {% endif %}
 ```
 
+---
+
+## Floating Major Tags (`floating_major_tag`)
+
+For ecosystems like GitHub Actions, Docker images, and Go libraries, projects maintain a floating major tag (e.g. `v1`, `v2`) pointing to the latest release within that major version:
+
+```toml
+[git]
+tag_prefix = "v"
+floating_major_tag = true # default: false
+```
+
+When `floating_major_tag = true`:
+1. **Tag Filtering in `git::latest_tag`**: Floating tags matching `^[vV]?[0-9]+$` are ignored when resolving the previous release tag, ensuring commit distance and conventional bumping always resolve from full 3-part SemVer tags (`vX.Y.Z`).
+2. **Drift Immunity in `cutver doctor`**: `cutver doctor --check-changelog` automatically ignores floating major tags so they don't produce false changelog drift warnings when git tags are compared against `CHANGELOG.md`.
+3. **Automated Lifecycle**: During `cutver bump`, `cutver` creates or force-updates the local floating tag `vX` pointing to the release commit. If `publish.push = true`, the floating tag is pushed with a force refspec (`+refs/tags/vX:refs/tags/vX`) alongside the release tag.
 
 ---
 

@@ -196,6 +196,8 @@ pub struct Git {
     #[serde(default = "default_require_clean_tree")]
     pub require_clean_tree: bool,
     pub require_branch: Option<String>,
+    #[serde(default)]
+    pub floating_major_tag: bool,
 }
 
 impl Default for Git {
@@ -205,6 +207,7 @@ impl Default for Git {
             commit_message: default_commit_message(),
             require_clean_tree: default_require_clean_tree(),
             require_branch: None,
+            floating_major_tag: false,
         }
     }
 }
@@ -333,5 +336,22 @@ default_timeout = 60
     fn pyproject_manifest_alias() {
         let cfg = load_str(&manifest("pyproject-toml", "")).unwrap();
         assert_eq!(cfg.manifest[0].kind, ManifestKind::Pyproject { table: None });
+    }
+
+    #[test]
+    fn git_floating_major_tag_parsing() {
+        let toml = r#"
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[git]
+floating_major_tag = true
+"#;
+        let c = load_str(toml).unwrap();
+        assert!(c.git.floating_major_tag);
+
+        let default_cfg = load_str(&manifest("cargo-package", "")).unwrap();
+        assert!(!default_cfg.git.floating_major_tag);
     }
 }

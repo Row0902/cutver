@@ -292,6 +292,7 @@ When `post_bump` lifecycle hooks run (such as `cargo check`, `npm install`, or `
 | **Dynamic Templating** | **MiniJinja** | Plugin templates | Limited | Limited |
 | **First-Party GitHub Actions** | **`cutver/setup`, `cutver/release`** | Actions available | None | Action available |
 | **AI Coding Agent Skills** | **Yes (`cutver/skills`)** | None | None | None |
+| **Native Floating Major Tags** | **Yes (`v1`, `v2`)** | Plugin / Script | Script | Script |
 | **Single Declarative Config** | **`cutver.toml`** | Multiple files/plugins | `Cargo.toml` | `.changeset/` |
 
 ---

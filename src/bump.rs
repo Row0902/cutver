@@ -97,6 +97,7 @@ pub struct Summary {
     pub commit_message: String,
     pub tag: String,
     pub tag_skipped: bool,
+    pub floating_tag: Option<String>,
     pub post_bump: Option<String>,
     pub publish_push: bool,
     pub publish_push_command: Option<String>,
@@ -218,6 +219,29 @@ mod tests {
         git_commit(&dir, "chore: initial");
         git_tag(&dir, "v1.0.0");
         git_tag(&dir, "v1.1.0");
+
+        let cfg = load(&dir, "package.json", "");
+        let drift = doctor_changelog(&cfg).unwrap();
+        assert!(drift.is_empty());
+        assert!(drift.missing_in_changelog.is_empty());
+        assert!(drift.orphan_sections.is_empty());
+    }
+
+    #[test]
+    fn test_doctor_changelog_ignores_floating_tags() {
+        let dir = tmp("cutver-doc-cl-floating");
+        crate::git::init_test_repo(&dir);
+        write(&dir, "package.json", r#"{"version": "1.1.0"}"#);
+        write(&dir, "Cargo.toml", "[package]\nversion = \"1.1.0\"\n");
+        write(
+            &dir,
+            "CHANGELOG.md",
+            "# Changelog\n\n## [1.1.0] - 2024-01-02\n- feature\n\n## [1.0.0] - 2024-01-01\n- initial\n",
+        );
+        git_commit(&dir, "chore: initial");
+        git_tag(&dir, "v1.0.0");
+        git_tag(&dir, "v1.1.0");
+        git_tag(&dir, "v1");
 
         let cfg = load(&dir, "package.json", "");
         let drift = doctor_changelog(&cfg).unwrap();

@@ -535,3 +535,69 @@ require_clean_tree = true
     assert!(cl.contains("0.1.0"));
     assert!(cl.contains("### Features\n- initial feature commit"));
 }
+
+#[test]
+fn bump_with_floating_major_tag_creates_and_updates_tag() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("bump-floating-major-tag");
+    let fixture = guard.fixture();
+    let package_json = r#"{
+  "name": "my-floating-pkg",
+  "version": "1.0.0"
+}
+"#;
+    let changelog_md = r#"# Changelog
+All notable changes to this project will be documented in this file.
+
+## [1.0.0] - 2026-01-01
+- initial release
+"#;
+    let cutver_toml = r#"[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[changelog]
+path = "CHANGELOG.md"
+mode = "conventional"
+
+[git]
+tag_prefix = "v"
+floating_major_tag = true
+require_clean_tree = true
+"#;
+    fixture.write("package.json", package_json);
+    fixture.write("CHANGELOG.md", changelog_md);
+    fixture.write("cutver.toml", cutver_toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["tag", "v1.0.0"]);
+    run_git_ok(&fixture.dir, &["tag", "v1"]);
+
+    // Make a commit to trigger minor bump
+    fixture.write("feature.txt", "new feature");
+    run_git_ok(&fixture.dir, &["add", "."]);
+    run_git_ok(&fixture.dir, &["commit", "-m", "feat: exciting new feature"]);
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = cutver::bump::run(&cfg, cutver::cli::BumpLevel::Auto, false, &[]).unwrap();
+
+    assert_eq!(summary.next.to_string(), "1.1.0");
+    assert_eq!(summary.floating_tag, Some("v1".to_string()));
+
+    // Verify both tags exist
+    assert!(tag_exists(fixture, "v1.1.0"));
+    assert!(tag_exists(fixture, "v1"));
+
+    // Verify v1 points to the exact same commit as v1.1.0
+    let v1_commit = cutver::git::rev_parse(&fixture.dir, "v1^{commit}").unwrap();
+    let v1_1_0_commit = cutver::git::rev_parse(&fixture.dir, "v1.1.0^{commit}").unwrap();
+    assert_eq!(v1_commit, v1_1_0_commit);
+
+    // Verify latest_tag resolves v1.1.0, ignoring floating tag v1
+    let latest = cutver::git::latest_tag(&fixture.dir, Some("v")).unwrap();
+    assert_eq!(latest, Some("v1.1.0".to_string()));
+}
