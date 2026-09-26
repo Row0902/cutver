@@ -69,18 +69,16 @@ pub fn format_manifest_entry(m: &DiscoveredManifest) -> String {
 pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
     let mut out = String::new();
     out.push_str("# cutver.toml - release orchestration configuration\n");
-    out.push_str("# For full documentation, see https://github.com/cutver/cutver\n\n");
-
-    out.push_str("[version]\n");
-    out.push_str("strategy = \"conventional\"\n");
+    out.push_str("# For full documentation, see https://github.com/cutver/cutver\n");
 
     if discovery.manifests.is_empty() {
         out.push_str("\n# No manifests were automatically detected during init.\n");
-        out.push_str("# Declare your project manifests below:\n");
+        out.push_str("# Declare your project manifests below (the first is the source of truth):\n");
         out.push_str("# [[manifest]]\n");
         out.push_str("# path = \"Cargo.toml\"\n");
         out.push_str("# kind = \"cargo-package\"\n");
     } else {
+        out.push_str("\n# The first declared manifest serves as the primary source of truth for versions\n");
         for m in &discovery.manifests {
             out.push('\n');
             out.push_str(&format_manifest_entry(m));
@@ -96,6 +94,7 @@ pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
         if discovery.hints.has_node {
             out.push_str("test = \"npm test\"\n");
         }
+        out.push_str("default_timeout = 300\n");
     }
 
     out.push_str("\n[changelog]\n");
@@ -106,7 +105,8 @@ pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
     out.push_str("\n[git]\n");
     out.push_str("tag_prefix = \"v\"\n");
     out.push_str("require_clean_tree = true\n");
-    out.push_str("commit_message = \"chore(release): v{version}\"\n");
+    out.push_str("commit_message = \"chore(release): v{version} [skip ci]\"\n");
+    out.push_str("require_branch = \"main\"\n");
 
     let has_hooks = discovery.hints.has_rust || discovery.hints.has_uv_lock;
     if has_hooks {
@@ -119,6 +119,9 @@ pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
             out.push_str("post_bump = \"uv lock\"\n");
         }
     }
+
+    out.push_str("\n[publish]\n");
+    out.push_str("push = true\n");
 
     out
 }
@@ -351,7 +354,9 @@ mod tests {
         assert!(td.path.join("CHANGELOG.md").is_file());
 
         let cfg_text = td.read("cutver.toml");
-        assert!(cfg_text.contains("strategy = \"conventional\""));
+        assert!(cfg_text.contains("commit_message = \"chore(release): v{version} [skip ci]\""));
+        assert!(cfg_text.contains("require_branch = \"main\""));
+        assert!(cfg_text.contains("push = true"));
         assert!(cfg_text.contains("kind = \"cargo-package\""));
         assert!(cfg_text.contains("check = \"cargo check --workspace\""));
         assert!(cfg_text.contains("post_bump = \"cargo check --workspace\""));
