@@ -215,6 +215,43 @@ cutver changelog latest --template .github/templates/cutver/RELEASE.md
 
 ---
 
+## AI Coding Agent Skills
+
+Equip your AI coding assistants (Pi, Claude Code, Cursor, GitHub Copilot, Codex) with official release engineering skills from **[`cutver/skills`](https://github.com/cutver/skills)**:
+
+### Installation
+
+Install all Cutver skills into your agent's workspace using the Open Agent Skills standard:
+
+```bash
+# npm
+npx skills add cutver/skills
+
+# bun
+bunx skills add cutver/skills
+
+# pnpm
+pnpm dlx skills add cutver/skills
+```
+
+You can also install individual skills:
+```bash
+npx skills add cutver/skills --skill cutver-release
+```
+
+### Available Skills
+
+| Skill | Description | Triggers |
+| :--- | :--- | :--- |
+| **`cutver-release`** | Safe SemVer version bumping with mandatory `--dry-run` simulation before mutating disk. | `release`, `cut release`, `bump version`, `cutver bump` |
+| **`cutver-doctor`** | Diagnostic preflight checks for manifest version drift and changelog consistency. | `doctor`, `cutver doctor`, `verify manifests` |
+| **`cutver-init`** | Intelligent workspace onboarding and polyglot manifest autodiscovery. | `init`, `cutver init`, `setup cutver` |
+| **`cutver-changelog`** | Extracts release notes for CI/CD, webhooks, or dynamic MiniJinja templates. | `changelog`, `cutver changelog`, `changelog latest` |
+
+> **Agent Safety Invariant**: Cutver skills enforce a mandatory `--dry-run` golden rule. Agents simulate version calculations and preview manifest diffs before touching files or git tags.
+
+---
+
 ## Supported Manifest Ecosystems
 
 `cutver` treats every manifest with surgical precision:
@@ -246,6 +283,7 @@ When `post_bump` lifecycle hooks run (such as `cargo check`, `npm install`, or `
 | **Automatic Lockfile Staging** | **Yes** (Cargo, Bun, UV, Pnpm, etc.) | Varies | Yes (Cargo only) | Yes (NPM only) |
 | **Dynamic Templating** | **MiniJinja** | Plugin templates | Limited | Limited |
 | **First-Party GitHub Actions** | **`cutver/setup`, `cutver/release`** | Actions available | None | Action available |
+| **AI Coding Agent Skills** | **Yes (`cutver/skills`)** | None | None | None |
 | **Single Declarative Config** | **`cutver.toml`** | Multiple files/plugins | `Cargo.toml` | `.changeset/` |
 
 ---
@@ -276,6 +314,7 @@ cutver doctor --check-changelog
 - **Official GitHub Actions**:
   - [`cutver/setup`](https://github.com/cutver/setup) — GitHub Action to install and cache Cutver CLI.
   - [`cutver/release`](https://github.com/cutver/release) — GitHub Action to run Cutver releases in CI/CD.
+- **AI Agent Skills**: [`cutver/skills`](https://github.com/cutver/skills) — Autonomous release engineering skills for Pi, Claude Code, Cursor, and GitHub Copilot.
 - **Changelog**: [`CHANGELOG.md`](CHANGELOG.md) — Release notes and version history.
 
 ---
