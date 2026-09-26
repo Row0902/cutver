@@ -45,15 +45,20 @@ No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stri
 
 ### 1. Install `cutver`
 
-**Via Cargo:**
+**Via Homebrew (macOS & Linux):**
 ```bash
-cargo install cutver
+brew install Row0902/tap/cutver
 ```
 
 **Via Scoop (Windows):**
 ```powershell
 scoop bucket add row https://github.com/Row0902/scoop-bucket
 scoop install cutver
+```
+
+**Via Cargo:**
+```bash
+cargo install cutver
 ```
 
 **Via Precompiled Binaries:**
