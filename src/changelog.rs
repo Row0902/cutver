@@ -7,7 +7,9 @@ mod extract;
 mod render;
 mod update;
 
-pub use context::{CommitContext, ReleaseContext, build_context, build_context_auto};
+pub use context::{
+    CommitContext, ReleaseContext, build_context, build_context_auto, build_context_with_filter, filter_commits,
+};
 pub use extract::{extract_latest, extract_version, list_versions, read_latest, read_version};
 pub use render::{render_body, render_body_with_context, render_template};
 pub use update::{format_date, update};

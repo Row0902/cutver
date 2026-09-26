@@ -349,3 +349,36 @@ require_clean_tree = true
     assert!(cl.contains("Static template notes."));
     assert!(!cl.contains("### Features"));
 }
+
+#[test]
+fn bump_auto_filters_out_self_referential_release_commits() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("conv-cl-filter-release");
+    write_fixture(
+        &guard,
+        r#"[preflight]
+check = "true""#,
+    );
+    let fixture = guard.fixture();
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "chore(release): v1.2.3"],
+    );
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: exciting new feature"],
+    );
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = bump_run(&cfg, BumpLevel::Auto, false, &[]).unwrap();
+    assert_eq!(summary.next.to_string(), "1.3.0");
+
+    let cl = fixture.read("CHANGELOG.md");
+    assert!(cl.contains("### Features\n- exciting new feature"));
+    assert!(!cl.contains("Maintenance"));
+    assert!(!cl.contains("chore(release)"));
+    assert!(!cl.contains("v1.2.3"));
+}

@@ -80,8 +80,58 @@ pub struct ReleaseContext {
     pub contributors: Vec<String>,
 }
 
+pub fn filter_commits(
+    commits: &[ConventionalCommit],
+    ignore_release_commits: bool,
+    ignore_scopes: &[String],
+) -> Vec<ConventionalCommit> {
+    commits
+        .iter()
+        .filter(|c| {
+            if ignore_release_commits {
+                // Exclude commits where commit_type == "chore" and scope.as_deref() == Some("release")
+                // Exclude commits where description.trim().starts_with("release:") or
+                // description.trim().starts_with("v") with version numbers, or scope == Some("release")
+                if c.commit_type.eq_ignore_ascii_case("chore") && c.scope.as_deref() == Some("release") {
+                    return false;
+                }
+
+                if let Some(scope) = &c.scope
+                    && scope.eq_ignore_ascii_case("release")
+                {
+                    return false;
+                }
+
+                let desc = c.description.trim();
+                let lower_desc = desc.to_ascii_lowercase();
+                if lower_desc.starts_with("release:") || lower_desc.starts_with("release ") {
+                    return false;
+                }
+
+                // Check for "v" followed by version numbers e.g. "v1", "v0.1.0", "v1.2.3"
+                if let Some(rest) = desc.strip_prefix(['v', 'V']) {
+                    let rest = rest.trim_start();
+                    if rest.starts_with(|ch: char| ch.is_ascii_digit()) {
+                        return false;
+                    }
+                }
+            }
+
+            if !ignore_scopes.is_empty()
+                && let Some(scope) = &c.scope
+                && ignore_scopes.iter().any(|s| s.eq_ignore_ascii_case(scope))
+            {
+                return false;
+            }
+
+            true
+        })
+        .cloned()
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn build_context(
+pub fn build_context_with_filter(
     version: &str,
     previous_version: Option<&str>,
     tag: &str,
@@ -92,7 +142,12 @@ pub fn build_context(
     contributors: Vec<String>,
     include_scopes: bool,
     fallback_entry: &str,
+    ignore_release_commits: bool,
+    ignore_scopes: &[String],
 ) -> ReleaseContext {
+    let filtered_commits = filter_commits(commits, ignore_release_commits, ignore_scopes);
+    let commits = &filtered_commits;
+
     struct Category {
         header: &'static str,
         items: Vec<String>,
@@ -207,6 +262,35 @@ pub fn build_context(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn build_context(
+    version: &str,
+    previous_version: Option<&str>,
+    tag: &str,
+    previous_tag: Option<&str>,
+    date: &str,
+    repository: Option<String>,
+    commits: &[ConventionalCommit],
+    contributors: Vec<String>,
+    include_scopes: bool,
+    fallback_entry: &str,
+) -> ReleaseContext {
+    build_context_with_filter(
+        version,
+        previous_version,
+        tag,
+        previous_tag,
+        date,
+        repository,
+        commits,
+        contributors,
+        include_scopes,
+        fallback_entry,
+        true,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn build_context_auto(
     version: &str,
     tag_prefix: &str,
@@ -217,6 +301,8 @@ pub fn build_context_auto(
     contributors: Vec<String>,
     include_scopes: bool,
     fallback_entry: &str,
+    ignore_release_commits: bool,
+    ignore_scopes: &[String],
 ) -> ReleaseContext {
     let clean_version = version.strip_prefix(tag_prefix).unwrap_or(version);
     let tag = if version.starts_with(tag_prefix) {
@@ -228,7 +314,7 @@ pub fn build_context_auto(
     let today = crate::changelog::format_date(std::time::SystemTime::now());
     let date_str = date.unwrap_or(&today);
 
-    build_context(
+    build_context_with_filter(
         clean_version,
         previous_version,
         &tag,
@@ -239,6 +325,8 @@ pub fn build_context_auto(
         contributors,
         include_scopes,
         fallback_entry,
+        ignore_release_commits,
+        ignore_scopes,
     )
 }
 
@@ -247,14 +335,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_filter_commits_release_commits() {
+        let commits = vec![
+            ConventionalCommit::parse("chore(release): v1.0.0").unwrap(),
+            ConventionalCommit::parse("chore(deps): update foo").unwrap(),
+            ConventionalCommit::parse("chore: clean up").unwrap(),
+            ConventionalCommit::parse("chore: release: 1.0.0").unwrap(),
+            ConventionalCommit::parse("fix: v2.0.0 bug").unwrap(), // wait, description is "v2.0.0 bug" -> starts with 'v' and digit
+            ConventionalCommit::parse("feat: add feature").unwrap(),
+        ];
+
+        // When ignore_release_commits is true
+        let filtered = filter_commits(&commits, true, &[]);
+        let descriptions: Vec<&str> = filtered.iter().map(|c| c.description.trim()).collect();
+        assert_eq!(descriptions, vec!["update foo", "clean up", "add feature"]);
+
+        // When ignore_release_commits is false
+        let unfiltered = filter_commits(&commits, false, &[]);
+        assert_eq!(unfiltered.len(), commits.len());
+    }
+
+    #[test]
+    fn test_filter_commits_ignore_scopes() {
+        let commits = vec![
+            ConventionalCommit::parse("feat(cli): new flag").unwrap(),
+            ConventionalCommit::parse("fix(internal): hide debug output").unwrap(),
+            ConventionalCommit::parse("docs(WIP): draft docs").unwrap(),
+            ConventionalCommit::parse("chore: regular chore").unwrap(),
+        ];
+
+        let ignore = vec!["internal".to_string(), "wip".to_string()];
+        let filtered = filter_commits(&commits, false, &ignore);
+        let descriptions: Vec<&str> = filtered.iter().map(|c| c.description.trim()).collect();
+        assert_eq!(descriptions, vec!["new flag", "regular chore"]);
+    }
+
+    #[test]
     fn test_build_context_full() {
         let commits = vec![
             ConventionalCommit::parse("feat(cli): add template flag").unwrap(),
             ConventionalCommit::parse("fix: small fix").unwrap(),
             ConventionalCommit::parse("feat!: breaking api change").unwrap(),
+            ConventionalCommit::parse("chore(release): v1.2.0").unwrap(),
         ];
         let contributors = vec!["Alice".to_string(), "Bob".to_string()];
-        let ctx = build_context(
+        let ctx = build_context_with_filter(
             "1.2.0",
             Some("1.1.0"),
             "v1.2.0",
@@ -265,6 +390,8 @@ mod tests {
             contributors,
             true,
             "Maintenance and updates.",
+            true,
+            &[],
         );
 
         assert_eq!(ctx.version, "1.2.0");
@@ -279,6 +406,7 @@ mod tests {
         assert_eq!(ctx.features, "- **cli**: add template flag");
         assert_eq!(ctx.fixes, "- small fix");
         assert_eq!(ctx.breaking, "- breaking api change");
+        assert_eq!(ctx.maintenance, "");
         assert_eq!(ctx.commits.len(), 3);
         assert_eq!(ctx.commits[0].commit_type, "feat");
         assert_eq!(ctx.commits[0].scope.as_deref(), Some("cli"));
@@ -286,11 +414,12 @@ mod tests {
         assert!(ctx.all_changes.contains("### ⚠️ Breaking Changes"));
         assert!(ctx.all_changes.contains("### Features"));
         assert!(ctx.all_changes.contains("### Bug Fixes"));
+        assert!(!ctx.all_changes.contains("Maintenance"));
     }
 
     #[test]
     fn test_build_context_empty_commits() {
-        let ctx = build_context(
+        let ctx = build_context_with_filter(
             "0.1.0",
             None,
             "v0.1.0",
@@ -301,6 +430,8 @@ mod tests {
             vec![],
             true,
             "Initial release.",
+            true,
+            &[],
         );
 
         assert_eq!(ctx.compare_url, None);

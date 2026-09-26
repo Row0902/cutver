@@ -102,7 +102,7 @@ pub fn run(
             let today = changelog::format_date(std::time::SystemTime::now());
             let next_ver = next.to_string();
             let current_ver = current.to_string();
-            let context = changelog::build_context(
+            let context = changelog::build_context_with_filter(
                 &next_ver,
                 Some(&current_ver),
                 &tag,
@@ -113,6 +113,8 @@ pub fn run(
                 contributors,
                 config.changelog.include_scopes,
                 &config.changelog.fallback_entry,
+                config.changelog.ignore_release_commits,
+                &config.changelog.ignore_scopes,
             );
             let body = changelog::render_body_with_context(&config.changelog, &commits, &context);
             let update_res = changelog::update(cl_path, &tag, &body);

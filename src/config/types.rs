@@ -144,6 +144,10 @@ pub struct Changelog {
     pub include_scopes: bool,
     #[serde(default = "default_fallback_entry")]
     pub fallback_entry: String,
+    #[serde(default = "default_true")]
+    pub ignore_release_commits: bool,
+    #[serde(default)]
+    pub ignore_scopes: Vec<String>,
 }
 
 impl Default for Changelog {
@@ -157,6 +161,8 @@ impl Default for Changelog {
             template_file: None,
             include_scopes: default_true(),
             fallback_entry: default_fallback_entry(),
+            ignore_release_commits: default_true(),
+            ignore_scopes: Vec::new(),
         }
     }
 }
@@ -244,6 +250,8 @@ mod tests {
         assert_eq!(default_cl.fallback_entry, "Maintenance and updates.");
         assert_eq!(default_cl.template, None);
         assert_eq!(default_cl.template_file, None);
+        assert!(default_cl.ignore_release_commits);
+        assert!(default_cl.ignore_scopes.is_empty());
 
         let toml = r####"
 [[manifest]]
@@ -257,6 +265,8 @@ template = "### Release {{ version }}"
 template_file = "templates/release.j2"
 include_scopes = false
 fallback_entry = "Custom fallback notes."
+ignore_release_commits = false
+ignore_scopes = ["internal", "wip"]
 "####;
         let c = load_str(toml).unwrap();
         assert_eq!(c.changelog.mode, "template");
@@ -264,6 +274,8 @@ fallback_entry = "Custom fallback notes."
         assert_eq!(c.changelog.template_file.as_deref(), Some("templates/release.j2"));
         assert!(!c.changelog.include_scopes);
         assert_eq!(c.changelog.fallback_entry, "Custom fallback notes.");
+        assert!(!c.changelog.ignore_release_commits);
+        assert_eq!(c.changelog.ignore_scopes, vec!["internal", "wip"]);
     }
 
     #[test]
