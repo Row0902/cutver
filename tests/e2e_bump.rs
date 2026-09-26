@@ -404,6 +404,7 @@ edition = "2024"
     fixture.write("src/lib.rs", "// empty lib");
 
     init_git_repo(fixture);
+    run_git_ok(&fixture.dir, &["checkout", "-B", "main"]);
     initial_commit(fixture);
 
     // Run cutver init to scaffold default config and template
