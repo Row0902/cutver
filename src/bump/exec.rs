@@ -23,6 +23,16 @@ pub fn run(
     dry_run: bool,
     skip_preflight: &[String],
 ) -> Result<Summary, Error> {
+    run_with_first_release(config, bump_kind, dry_run, skip_preflight, false)
+}
+
+pub fn run_with_first_release(
+    config: &Config,
+    bump_kind: impl Into<BumpLevel>,
+    dry_run: bool,
+    skip_preflight: &[String],
+    first_release: bool,
+) -> Result<Summary, Error> {
     // cutver runs from the project root where release.toml lives; the git
     // repository root is therefore the directory containing release.toml.
     let repo = &config.root_dir;
@@ -32,19 +42,23 @@ pub fn run(
     let (source_entry, _editor, current) = current_source(config)?;
     let bump_level = bump_kind.into();
     let mut auto_commits = None;
-    let bump_semver = match bump_level {
-        BumpLevel::Patch => Bump::Patch,
-        BumpLevel::Minor => Bump::Minor,
-        BumpLevel::Major => Bump::Major,
-        BumpLevel::Auto => {
-            let tag = git::latest_tag(repo, Some(&config.git.tag_prefix))?;
-            let commits = git::commits_since(repo, tag.as_deref())?;
-            let (deduced, parsed) = conventional::parse_and_deduce_bump(&commits);
-            auto_commits = Some(parsed);
-            deduced
-        }
+    let next = if first_release {
+        current.clone()
+    } else {
+        let bump_semver = match bump_level {
+            BumpLevel::Patch => Bump::Patch,
+            BumpLevel::Minor => Bump::Minor,
+            BumpLevel::Major => Bump::Major,
+            BumpLevel::Auto => {
+                let tag = git::latest_tag(repo, Some(&config.git.tag_prefix))?;
+                let commits = git::commits_since(repo, tag.as_deref())?;
+                let (deduced, parsed) = conventional::parse_and_deduce_bump(&commits);
+                auto_commits = Some(parsed);
+                deduced
+            }
+        };
+        semver_bump::bump(&current, bump_semver)
     };
-    let next = semver_bump::bump(&current, bump_semver);
     let commit_message = git::commit_message(&config.git.commit_message, &next.to_string());
     let tag = git::tag_name(&config.git.tag_prefix, &next.to_string());
 
@@ -76,25 +90,41 @@ pub fn run(
     let original_changelog = if let Some(cl_path) = &config.changelog.path {
         let original = if !dry_run { read(cl_path).ok() } else { None };
         if !dry_run {
-            let latest_tag = match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
-                Ok(t) => t,
-                Err(e) => {
-                    rollback(&computed, &paths_to_stage, None);
-                    return Err(Error::Git(e));
+            let latest_tag = if first_release {
+                None
+            } else {
+                match git::latest_tag(repo, Some(&config.git.tag_prefix)) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        rollback(&computed, &paths_to_stage, None);
+                        return Err(Error::Git(e));
+                    }
                 }
             };
-            let commits = match auto_commits {
-                Some(parsed) => parsed,
-                None => {
-                    let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            rollback(&computed, &paths_to_stage, None);
-                            return Err(Error::Git(e));
-                        }
-                    };
-                    let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
-                    parsed
+            let commits = if first_release {
+                let commit_msgs = match git::commits_since(repo, None) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        rollback(&computed, &paths_to_stage, None);
+                        return Err(Error::Git(e));
+                    }
+                };
+                let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
+                parsed
+            } else {
+                match auto_commits {
+                    Some(parsed) => parsed,
+                    None => {
+                        let commit_msgs = match git::commits_since(repo, latest_tag.as_deref()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                rollback(&computed, &paths_to_stage, None);
+                                return Err(Error::Git(e));
+                            }
+                        };
+                        let (_bump, parsed) = conventional::parse_and_deduce_bump(&commit_msgs);
+                        parsed
+                    }
                 }
             };
             let contributors = git::list_authors_since(repo, latest_tag.as_deref()).unwrap_or_default();
@@ -181,7 +211,7 @@ pub fn run(
         unstage(repo);
         Error::Stage(e)
     })?;
-    git::commit(repo, &commit_message, dry_run).map_err(|e| {
+    git::commit_ext(repo, &commit_message, dry_run, paths_to_stage.is_empty()).map_err(|e| {
         rollback(&computed, &paths_to_stage, original_changelog.as_ref());
         unstage(repo);
         Error::Commit(e)

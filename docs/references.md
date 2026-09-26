@@ -281,18 +281,19 @@ cutver init [OPTIONS]
 
 ---
 
-### `cutver bump <LEVEL>`
+### `cutver bump [LEVEL]`
 
 Executes the release pipeline.
 
 ```bash
-cutver bump <patch|minor|major|auto> [OPTIONS]
+cutver bump [patch|minor|major|auto] [OPTIONS]
 ```
 
 #### Arguments
-- `<LEVEL>`: The SemVer bump level to apply (`patch`, `minor`, `major`, or `auto`).
+- `[LEVEL]`: The SemVer bump level to apply (`patch`, `minor`, `major`, or `auto`). Defaults to `auto`.
 
 #### Options
+- `--first-release`, `--fr`, `-fr`: Performs an initial/first release without incrementing the manifest version. Collects initial commits into changelog, commits (even if manifests didn't change), and creates the initial release tag.
 - `--dry-run`: Runs the full pipeline in simulation mode. Validates config, tests preflight, calculates version bumps, and displays the execution summary without writing any files, creating commits, or pushing tags.
 - `--skip-preflight <STEP>`: Bypasses one or more named preflight checks (can be specified multiple times, e.g., `--skip-preflight tests --skip-preflight lint`).
 - `-c, --config <PATH>`: Explicit path to `cutver.toml` or `release.toml`.

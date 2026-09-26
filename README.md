@@ -109,6 +109,14 @@ cutver bump auto --dry-run
 cutver bump auto
 ```
 
+For first/initial releases where manifests are already at `0.1.0` (or `1.0.0`) and should not be incremented:
+```bash
+# Initial release: tags current version, gathers all initial commits into changelog
+cutver bump --first-release
+# or shorthand
+cutver bump -fr
+```
+
 You can also specify explicit bump levels at any time:
 ```bash
 cutver bump patch

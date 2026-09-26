@@ -122,22 +122,38 @@ pub fn stage(repo: impl AsRef<Path>, paths: &[String], dry_run: bool) -> Result<
 }
 
 pub fn commit(repo: impl AsRef<Path>, message: &str, dry_run: bool) -> Result<Option<String>, Error> {
+    commit_ext(repo, message, dry_run, false)
+}
+
+pub fn commit_ext(
+    repo: impl AsRef<Path>,
+    message: &str,
+    dry_run: bool,
+    allow_empty: bool,
+) -> Result<Option<String>, Error> {
     if dry_run {
-        return Ok(Some(format!(r#"git commit -m "{}""#, message)));
+        let flag = if allow_empty { " --allow-empty" } else { "" };
+        return Ok(Some(format!(r#"git commit{flag} -m "{}""#, message)));
     }
+    let mut args = vec!["commit"];
+    if allow_empty {
+        args.push("--allow-empty");
+    }
+    args.extend(["-m", message]);
+
     let status = Command::new("git")
         .current_dir(&repo)
-        .args(["commit", "-m", message])
+        .args(&args)
         .status()
         .map_err(|e| Error::Command {
-            command: "commit".into(),
+            command: args.join(" "),
             source: e,
         })?;
     if status.success() {
         Ok(None)
     } else {
         Err(Error::Status {
-            command: "commit".into(),
+            command: args.join(" "),
             status,
         })
     }
@@ -525,6 +541,10 @@ mod tests {
         assert_eq!(
             commit(".", "chore: v1.0.0", true).unwrap().unwrap(),
             r#"git commit -m "chore: v1.0.0""#
+        );
+        assert_eq!(
+            commit_ext(".", "chore: v1.0.0", true, true).unwrap().unwrap(),
+            r#"git commit --allow-empty -m "chore: v1.0.0""#
         );
         assert_eq!(
             tag(".", "v1.0.0", "1.0.0", true).unwrap().unwrap(),

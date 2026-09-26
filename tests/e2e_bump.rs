@@ -466,3 +466,72 @@ kind = "pyproject"
             .contains("version = \"2.0.1\" # poetry version")
     );
 }
+
+#[test]
+fn bump_first_release_preserves_version_and_tags_initial_version() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("bump-first-release");
+    let fixture = guard.fixture();
+    let package_json = r#"{
+  "name": "my-initial-pkg",
+  "version": "0.1.0"
+}
+"#;
+    let cargo_toml = r#"[package]
+name = "my-initial-pkg"
+version = "0.1.0"
+edition = "2021"
+"#;
+    let changelog_md = r#"# Changelog
+All notable changes to this project will be documented in this file.
+
+"#;
+    let cutver_toml = r#"[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[[manifest]]
+path = "Cargo.toml"
+kind = "cargo-package"
+
+[changelog]
+path = "CHANGELOG.md"
+mode = "conventional"
+
+[git]
+tag_prefix = "v"
+require_clean_tree = true
+"#;
+    fixture.write("package.json", package_json);
+    fixture.write("Cargo.toml", cargo_toml);
+    fixture.write("CHANGELOG.md", changelog_md);
+    fixture.write("cutver.toml", cutver_toml);
+    init_git_repo(fixture);
+    initial_commit(fixture);
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: initial feature commit"],
+    );
+
+    let cfg = config::load("cutver.toml").unwrap();
+    let summary = cutver::bump::run_with_first_release(&cfg, cutver::cli::BumpLevel::Auto, false, &[], true).unwrap();
+
+    // Resulting version is still 0.1.0
+    assert_eq!(summary.current.to_string(), "0.1.0");
+    assert_eq!(summary.next.to_string(), "0.1.0");
+    assert!(fixture.read("package.json").contains("\"version\": \"0.1.0\""));
+    assert!(fixture.read("Cargo.toml").contains("version = \"0.1.0\""));
+
+    // Tag v0.1.0 is created
+    assert!(tag_exists(fixture, "v0.1.0"));
+    assert!(is_annotated_tag(fixture, "v0.1.0"));
+
+    // CHANGELOG.md has ## [0.1.0] with initial commits
+    let cl = fixture.read("CHANGELOG.md");
+    assert!(cl.contains("0.1.0"));
+    assert!(cl.contains("### Features\n- initial feature commit"));
+}

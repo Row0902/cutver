@@ -29,7 +29,7 @@ pub enum Commands {
     /// Synchronize versions across manifests, run preflight checks, update changelog, and create a Git commit and tag
     Bump {
         /// SemVer level to increment
-        #[arg(value_enum)]
+        #[arg(value_enum, default_value = "auto")]
         level: BumpLevel,
         /// Simulate the release pipeline without modifying files or creating Git commits/tags
         #[arg(long)]
@@ -37,6 +37,9 @@ pub enum Commands {
         /// Skip named preflight verification steps (repeatable)
         #[arg(long, value_name = "STEP")]
         skip_preflight: Vec<String>,
+        /// Initial release without incrementing the version in manifests
+        #[arg(long = "first-release", visible_alias = "fr")]
+        first_release: bool,
     },
     /// Validate configuration and report version drift across declared manifests
     Doctor {
@@ -104,6 +107,19 @@ impl From<crate::semver_bump::Bump> for BumpLevel {
     }
 }
 
+pub fn normalize_args<I, T>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<String>,
+{
+    args.into_iter()
+        .map(|arg| {
+            let s = arg.into();
+            if s == "-fr" { "--first-release".to_string() } else { s }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +131,7 @@ mod tests {
             level,
             dry_run,
             skip_preflight,
+            first_release,
         } = cli.command
         else {
             panic!("expected bump")
@@ -122,6 +139,7 @@ mod tests {
         assert_eq!(level, BumpLevel::Patch);
         assert!(!dry_run);
         assert!(skip_preflight.is_empty());
+        assert!(!first_release);
         assert!(cli.config.is_none());
     }
 
@@ -142,6 +160,7 @@ mod tests {
             level,
             dry_run,
             skip_preflight,
+            first_release,
         } = cli.command
         else {
             panic!("expected bump")
@@ -149,6 +168,7 @@ mod tests {
         assert_eq!(level, BumpLevel::Minor);
         assert!(dry_run);
         assert_eq!(skip_preflight, vec!["tests", "build"]);
+        assert!(!first_release);
     }
 
     #[test]
@@ -158,6 +178,7 @@ mod tests {
             level,
             dry_run,
             skip_preflight,
+            first_release,
         } = cli.command
         else {
             panic!("expected bump")
@@ -165,6 +186,7 @@ mod tests {
         assert_eq!(level, BumpLevel::Auto);
         assert!(!dry_run);
         assert!(skip_preflight.is_empty());
+        assert!(!first_release);
     }
 
     #[test]
@@ -348,6 +370,54 @@ mod tests {
         assert!(update);
         assert!(force);
         assert_eq!(path, Some(PathBuf::from("sub/dir")));
+    }
+
+    #[test]
+    fn bump_first_release_flags_and_defaults() {
+        let cli = Cli::try_parse_from(["cutver", "bump", "--first-release"]).unwrap();
+        let Commands::Bump {
+            level,
+            dry_run,
+            skip_preflight,
+            first_release,
+        } = cli.command
+        else {
+            panic!("expected bump")
+        };
+        assert_eq!(level, BumpLevel::Auto);
+        assert!(!dry_run);
+        assert!(skip_preflight.is_empty());
+        assert!(first_release);
+
+        let cli2 = Cli::try_parse_from(["cutver", "bump", "auto", "--first-release"]).unwrap();
+        let Commands::Bump {
+            level: l2,
+            first_release: fr2,
+            ..
+        } = cli2.command
+        else {
+            panic!("expected bump")
+        };
+        assert_eq!(l2, BumpLevel::Auto);
+        assert!(fr2);
+
+        let cli3 = Cli::try_parse_from(["cutver", "bump", "--fr"]).unwrap();
+        let Commands::Bump { first_release: fr3, .. } = cli3.command else {
+            panic!("expected bump")
+        };
+        assert!(fr3);
+    }
+
+    #[test]
+    fn test_normalize_args() {
+        let normalized = normalize_args(["cutver", "bump", "-fr"]);
+        assert_eq!(normalized, vec!["cutver", "bump", "--first-release"]);
+
+        let cli = Cli::try_parse_from(normalized).unwrap();
+        let Commands::Bump { first_release, .. } = cli.command else {
+            panic!("expected bump");
+        };
+        assert!(first_release);
     }
 
     #[test]
