@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.3] - 2026-09-26
+
+**✨ What's Changed in v0.5.3**
+
+### 📚 Documentation
+- **readme**: add ai coding agent skills section and install guide (#48)
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Diff**: https://github.com/cutver/cutver/compare/v0.5.2...v0.5.3
 ## [v0.5.2] - 2026-09-26
 
 **✨ What's Changed in v0.5.2**
