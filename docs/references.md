@@ -73,6 +73,8 @@ template = """                    # Optional: inline MiniJinja template string
 # template_file = "templates/release.j2" # Optional: path to arbitrary template file relative to cutver.toml
 include_scopes = true             # Prefix entries with **scope**: (default: true)
 fallback_entry = "Maintenance and updates." # Fallback bullet entry when no commits match
+ignore_release_commits = true     # Exclude self-referential release commits (default: true)
+ignore_scopes = ["internal"]      # Exclude commits matching specified scopes (default: [])
 
 # Git automation and safety guards
 [git]
@@ -146,6 +148,15 @@ When `mode = "conventional"` is configured in `[changelog]`, release notes in `C
 ### Refactoring
 - deduplicate test setup helpers (#16)
 ```
+
+### Filtering Release and Scoped Commits
+
+By default, self-referential release commits (such as `chore(release): v1.2.0`, `chore: release: 1.0.0`, or commits scoped with `release`) are automatically filtered out so they do not clutter changelog categories:
+
+- `ignore_release_commits = true` (default): Excludes `chore(release): ...` commits, commits with scope `release`, and commits with release prefix descriptions.
+- `ignore_scopes = ["internal", "wip"]` (default: `[]`): Excludes any conventional commit whose scope matches one of the listed scopes (case-insensitively).
+
+Filtered commits do not appear under conventional sections (e.g. `### Maintenance`) or in the template context `commits` list.
 
 ---
 

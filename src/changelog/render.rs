@@ -55,7 +55,7 @@ pub fn render_body(
             Some(ctx) => ctx,
             None => {
                 let today = crate::changelog::format_date(std::time::SystemTime::now());
-                fallback_ctx = super::context::build_context(
+                fallback_ctx = super::context::build_context_with_filter(
                     "",
                     None,
                     "",
@@ -66,6 +66,8 @@ pub fn render_body(
                     Vec::new(),
                     config.include_scopes,
                     &config.fallback_entry,
+                    config.ignore_release_commits,
+                    &config.ignore_scopes,
                 );
                 &fallback_ctx
             }
@@ -92,6 +94,10 @@ pub fn render_body_with_context(
 }
 
 fn render_conventional(config: &Changelog, commits: &[ConventionalCommit]) -> String {
+    let filtered_commits =
+        super::context::filter_commits(commits, config.ignore_release_commits, &config.ignore_scopes);
+    let commits = &filtered_commits;
+
     struct Category {
         header: &'static str,
         items: Vec<String>,
