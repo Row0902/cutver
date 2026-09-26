@@ -56,8 +56,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com).
 **Full Diff**: https://github.com/cutver/cutver/compare/v0.5.1...v0.5.2
 ## [v0.5.1] - 2026-09-25
 
-## ✨ What's Changed in v0.5.1
-
 ### 🐛 Bug Fixes
 - **changelog**: only break release extraction on versioned headings (#45)
 
@@ -75,8 +73,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com).
 ---
 **Full Diff**: https://github.com/cutver/cutver/compare/v0.5.0...v0.5.1
 ## [v0.5.0] - 2026-09-21
-
-## What's Changed in v0.5.0
 
 ### 🚀 Features & Enhancements
 - **git**: respect .mailmap and resolve GitHub handles from noreply emails
