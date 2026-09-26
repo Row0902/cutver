@@ -389,10 +389,14 @@ pub fn build_context_with_raw_and_filter(
     ];
 
     let mut commit_contexts = Vec::with_capacity(commits.len());
+    let mut raw_iter = raw_commits.map(|raws| raws.iter());
 
     for c in commits {
-        let matching_raw = raw_commits.and_then(|raws| {
-            raws.iter().find(|r| {
+        // Advance linearly in order through raw commits. This ensures O(N) complexity
+        // across the entire commit history and guarantees that duplicate commits with
+        // identical messages correctly match their distinct sequential Git commits.
+        let matching_raw = if let Some(ref mut iter) = raw_iter {
+            iter.find(|r| {
                 if let Some(parsed) = ConventionalCommit::parse(&r.message) {
                     parsed == *c
                 } else {
@@ -400,7 +404,9 @@ pub fn build_context_with_raw_and_filter(
                         || r.message.lines().next().is_some_and(|l| l.contains(&c.description))
                 }
             })
-        });
+        } else {
+            None
+        };
 
         let enriched = enrich_commit_context(CommitContext::from(c), matching_raw, Some(c), repository.as_deref());
         commit_contexts.push(enriched);
@@ -768,5 +774,55 @@ mod tests {
             enriched.commit_url.as_deref(),
             Some("https://gitlab.com/group/project/-/commit/abcdef1234567890abcdef1234567890abcdef12")
         );
+    }
+
+    #[test]
+    fn test_linear_raw_commits_distinct_attribution_for_duplicates() {
+        let raw1 = crate::git::RawCommit {
+            hash: "1111111111111111111111111111111111111111".to_string(),
+            short_hash: "1111111".to_string(),
+            author_name: "Alice".to_string(),
+            author_email: "alice@example.com".to_string(),
+            message: "fix: duplicate fix message".to_string(),
+        };
+        let raw2 = crate::git::RawCommit {
+            hash: "2222222222222222222222222222222222222222".to_string(),
+            short_hash: "2222222".to_string(),
+            author_name: "Bob".to_string(),
+            author_email: "bob@example.com".to_string(),
+            message: "fix: duplicate fix message".to_string(),
+        };
+        let c1 = ConventionalCommit::parse(&raw1.message).unwrap();
+        let c2 = ConventionalCommit::parse(&raw2.message).unwrap();
+        let commits = vec![c1, c2];
+        let raws = vec![raw1, raw2];
+
+        let ctx = build_context_with_raw_and_filter(
+            "1.0.0",
+            None,
+            "v1.0.0",
+            None,
+            "2026-01-01",
+            None,
+            &commits,
+            Some(&raws),
+            vec![],
+            false,
+            "none",
+            true,
+            &[],
+        );
+
+        assert_eq!(ctx.commits.len(), 2);
+        assert_eq!(
+            ctx.commits[0].hash.as_deref(),
+            Some("1111111111111111111111111111111111111111")
+        );
+        assert_eq!(ctx.commits[0].author.as_deref(), Some("Alice"));
+        assert_eq!(
+            ctx.commits[1].hash.as_deref(),
+            Some("2222222222222222222222222222222222222222")
+        );
+        assert_eq!(ctx.commits[1].author.as_deref(), Some("Bob"));
     }
 }
