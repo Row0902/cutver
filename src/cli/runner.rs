@@ -25,12 +25,13 @@ pub fn run(args: Cli) -> i32 {
             level,
             dry_run,
             skip_preflight,
+            first_release,
         } => {
             let config = match load_config(args.config) {
                 Ok(c) => c,
                 Err(code) => return code,
             };
-            run_bump(&config, level, dry_run, &skip_preflight)
+            run_bump(&config, level, dry_run, &skip_preflight, first_release)
         }
     }
 }
@@ -442,8 +443,14 @@ pub fn run_changelog(config_override: Option<&Path>, command: ChangelogCommands)
     }
 }
 
-pub fn run_bump(config: &config::Config, level: BumpLevel, dry_run: bool, skip_preflight: &[String]) -> i32 {
-    match bump::run(config, level, dry_run, skip_preflight) {
+pub fn run_bump(
+    config: &config::Config,
+    level: BumpLevel,
+    dry_run: bool,
+    skip_preflight: &[String],
+    first_release: bool,
+) -> i32 {
+    match bump::run_with_first_release(config, level, dry_run, skip_preflight, first_release) {
         Ok(summary) => {
             print_bump_summary(&summary);
             0

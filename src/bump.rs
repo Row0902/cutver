@@ -5,7 +5,7 @@ use thiserror::Error;
 
 mod exec;
 
-pub use exec::{doctor, doctor_changelog, run};
+pub use exec::{doctor, doctor_changelog, run, run_with_first_release};
 
 #[derive(Debug, Error)]
 pub enum Error {
