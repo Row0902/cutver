@@ -6,6 +6,7 @@ use common::*;
 use cutver::bump::run as bump_run;
 use cutver::config;
 use cutver::semver_bump::Bump;
+use std::process::Command;
 
 #[test]
 fn bump_minor_happy_path() {
@@ -381,6 +382,68 @@ kind = "cargo-package"
     std::fs::create_dir_all(&sub).unwrap();
     let cfg = config::discover(&sub).unwrap();
     assert!(cfg.version.current_source.ends_with("Cargo.toml"));
+}
+
+#[test]
+fn bump_with_default_scaffolded_template() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("bump-default-template");
+    let fixture = guard.fixture();
+
+    fixture.write(
+        "Cargo.toml",
+        r#"[package]
+name = "test-pkg"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    fixture.write("src/lib.rs", "// empty lib");
+
+    init_git_repo(fixture);
+    initial_commit(fixture);
+
+    // Run cutver init to scaffold default config and template
+    let init_out = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .arg("init")
+        .output()
+        .expect("failed to execute cutver init");
+    assert!(init_out.status.success());
+
+    assert!(fixture.dir.join(".github/templates/cutver/RELEASE.md").is_file());
+
+    // Disable publish push for local test
+    let mut cfg_text = fixture.read("cutver.toml");
+    cfg_text = cfg_text.replace("push = true", "push = false");
+    fixture.write("cutver.toml", &cfg_text);
+
+    run_git_ok(&fixture.dir, &["add", "."]);
+    run_git_ok(&fixture.dir, &["commit", "-m", "chore: setup cutver"]);
+    run_git_ok(&fixture.dir, &["tag", "v0.1.0"]);
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: exciting feature (#10)"],
+    );
+
+    let bump_out = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["bump", "minor"])
+        .output()
+        .expect("failed to execute cutver bump");
+    assert!(
+        bump_out.status.success(),
+        "bump failed: {}",
+        String::from_utf8_lossy(&bump_out.stderr)
+    );
+
+    let cl = fixture.read("CHANGELOG.md");
+    assert!(cl.contains("## [v0.2.0] - "));
+    assert!(cl.contains("### Features"));
+    assert!(cl.contains("- exciting feature (#10)"));
 }
 
 #[test]

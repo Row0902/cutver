@@ -6,7 +6,12 @@ use crate::config;
 
 pub fn run(args: Cli) -> i32 {
     match args.command {
-        Commands::Init { update, force, path } => match crate::init::run_init(path, update, force) {
+        Commands::Init {
+            update,
+            force,
+            path,
+            no_template,
+        } => match crate::init::run_init(path, update, force, no_template) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("Error: {e}");

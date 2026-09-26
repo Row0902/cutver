@@ -4,12 +4,23 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-/// Prepend a new keep-a-changelog section for `version` to `path`.
+/// Prepend a new changelog section for `version` to `path`.
 ///
 /// `version` is the final display string (e.g. `v1.2.3`) and already includes
 /// any configured tag prefix. `template` is the section body; if empty a single
 /// `- Unreleased` bullet is used.
 pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(), Error> {
+    update_with_options(path, version, template, false, None, None)
+}
+
+pub fn update_with_options(
+    path: impl AsRef<Path>,
+    version: &str,
+    template: &str,
+    full_template: bool,
+    header_template: Option<&str>,
+    context: Option<&super::context::ReleaseContext>,
+) -> Result<(), Error> {
     let path = path.as_ref();
     let path_str = path.display().to_string();
     let content = fs::read_to_string(path).map_err(|e| Error::Read {
@@ -25,11 +36,42 @@ pub fn update(path: impl AsRef<Path>, version: &str, template: &str) -> Result<(
         return Ok(());
     }
 
-    let heading = format!("## [{}] - {}", version, format_date(SystemTime::now()));
-    let section = if template.is_empty() {
-        format!("{}\n\n- Unreleased\n", heading)
+    let is_full = full_template || template.trim_start().starts_with("## ") || template.trim_start().starts_with("# ");
+
+    let section = if is_full {
+        if template.is_empty() {
+            "- Unreleased\n".to_string()
+        } else {
+            let mut s = template.trim().to_string();
+            s.push('\n');
+            s
+        }
     } else {
-        format!("{}\n\n{}\n", heading, template)
+        let heading = if let Some(ht) = header_template {
+            if let Some(ctx) = context {
+                super::render::render_template(ht, ctx)
+                    .unwrap_or_else(|_| format!("## [{}] - {}", version, format_date(SystemTime::now())))
+            } else {
+                let today = format_date(SystemTime::now());
+                let mut env = minijinja::Environment::new();
+                env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+                let ctx_val = minijinja::context! {
+                    version => version,
+                    tag => version,
+                    date => today,
+                };
+                env.render_str(ht, ctx_val)
+                    .unwrap_or_else(|_| format!("## [{}] - {}", version, format_date(SystemTime::now())))
+            }
+        } else {
+            format!("## [{}] - {}", version, format_date(SystemTime::now()))
+        };
+
+        if template.is_empty() {
+            format!("{}\n\n- Unreleased\n", heading)
+        } else {
+            format!("{}\n\n{}\n", heading, template)
+        }
     };
 
     let updated = insert_section(&content, &section);

@@ -384,3 +384,119 @@ require_clean_tree = true
         "CHANGELOG.md should contain rendered template with authoritative context: {cl}"
     );
 }
+
+#[test]
+fn test_rich_commit_context_in_template() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("cl-rich-commit-context");
+    let fixture = guard.fixture();
+
+    let cutver_toml = r#"[version]
+current_source = "package.json"
+
+[[manifest]]
+path = "package.json"
+kind = "json"
+field = "version"
+
+[changelog]
+path = "CHANGELOG.md"
+full_template = true
+template = """
+# Release {{ version }}
+{% for c in commits %}
+- {{ c.short_hash }} - {{ c.description }} by {{ c.author }} (PR: {{ c.pr_url }})
+{% endfor %}
+"""
+
+[git]
+tag_prefix = "v"
+require_clean_tree = true
+"#;
+    fixture.write("cutver.toml", cutver_toml);
+    fixture.write("package.json", r#"{"version": "1.0.0"}"#);
+    fixture.write("CHANGELOG.md", "# Changelog\n\n# Release 1.0.0\n- Initial\n");
+
+    init_git_repo(fixture);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["tag", "v1.0.0"]);
+    run_git_ok(
+        &fixture.dir,
+        &["commit", "--allow-empty", "-m", "feat: add shiny thing (#101)"],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["bump", "minor"])
+        .output()
+        .expect("failed to execute cutver bump");
+
+    assert!(
+        output.status.success(),
+        "bump command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cl = fixture.read("CHANGELOG.md");
+    // Verify full_template did not prepend ## [v1.1.0] - date
+    assert!(
+        !cl.contains("## [v1.1.0] -"),
+        "full_template should not prepend default heading: {cl}"
+    );
+    assert!(
+        cl.contains("# Release 1.1.0"),
+        "CHANGELOG.md should contain custom # Release 1.1.0: {cl}"
+    );
+    assert!(
+        cl.contains("add shiny thing (#101) by Test User"),
+        "CHANGELOG.md should contain commit description and author: {cl}"
+    );
+}
+
+#[test]
+fn test_header_template_evaluation() {
+    assert!(
+        git_available(),
+        "git CLI is required for e2e tests but was not found in PATH"
+    );
+    let guard = FixtureGuard::new("cl-header-template");
+    let fixture = guard.fixture();
+
+    let cutver_toml = "[version]\ncurrent_source = \"package.json\"\n\n[[manifest]]\npath = \"package.json\"\nkind = \"json\"\nfield = \"version\"\n\n[changelog]\npath = \"CHANGELOG.md\"\nheader_template = \"## Release candidate {{ tag }} (v{{ version }})\"\n\n[git]\ntag_prefix = \"v\"\nrequire_clean_tree = true\n";
+    fixture.write("cutver.toml", cutver_toml);
+    fixture.write("package.json", r#"{"version": "1.0.0"}"#);
+    fixture.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [v1.0.0] - 2026-01-01\n\n- Initial release\n",
+    );
+
+    init_git_repo(fixture);
+    initial_commit(fixture);
+    run_git_ok(&fixture.dir, &["tag", "v1.0.0"]);
+    run_git_ok(&fixture.dir, &["commit", "--allow-empty", "-m", "fix: tiny fix"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cutver"))
+        .current_dir(&fixture.dir)
+        .args(["bump", "patch"])
+        .output()
+        .expect("failed to execute cutver bump");
+
+    assert!(
+        output.status.success(),
+        "bump command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cl = fixture.read("CHANGELOG.md");
+    assert!(
+        cl.contains("## Release candidate v1.0.1 (v1.0.1)"),
+        "CHANGELOG.md should contain custom evaluated header: {cl}"
+    );
+    assert!(
+        cl.contains("### Bug Fixes"),
+        "CHANGELOG.md should still contain conventional section: {cl}"
+    );
+}

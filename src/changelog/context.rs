@@ -6,6 +6,14 @@ pub struct CommitContext {
     pub scope: Option<String>,
     pub description: String,
     pub is_breaking: bool,
+    pub hash: Option<String>,
+    pub short_hash: Option<String>,
+    pub author: Option<String>,
+    pub author_email: Option<String>,
+    pub pr_number: Option<u64>,
+    pub pr_url: Option<String>,
+    pub issue_numbers: Vec<u64>,
+    pub commit_url: Option<String>,
 }
 
 impl serde::Serialize for CommitContext {
@@ -14,12 +22,20 @@ impl serde::Serialize for CommitContext {
         S: serde::Serializer,
     {
         use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(5))?;
+        let mut map = serializer.serialize_map(Some(13))?;
         map.serialize_entry("type", &self.commit_type)?;
         map.serialize_entry("commit_type", &self.commit_type)?;
         map.serialize_entry("scope", &self.scope)?;
         map.serialize_entry("description", &self.description)?;
         map.serialize_entry("is_breaking", &self.is_breaking)?;
+        map.serialize_entry("hash", &self.hash)?;
+        map.serialize_entry("short_hash", &self.short_hash)?;
+        map.serialize_entry("author", &self.author)?;
+        map.serialize_entry("author_email", &self.author_email)?;
+        map.serialize_entry("pr_number", &self.pr_number)?;
+        map.serialize_entry("pr_url", &self.pr_url)?;
+        map.serialize_entry("issue_numbers", &self.issue_numbers)?;
+        map.serialize_entry("commit_url", &self.commit_url)?;
         map.end()
     }
 }
@@ -35,7 +51,24 @@ impl<'de> serde::Deserialize<'de> for CommitContext {
             r#type: String,
             scope: Option<String>,
             description: String,
+            #[serde(default)]
             is_breaking: bool,
+            #[serde(default)]
+            hash: Option<String>,
+            #[serde(default)]
+            short_hash: Option<String>,
+            #[serde(default)]
+            author: Option<String>,
+            #[serde(default)]
+            author_email: Option<String>,
+            #[serde(default)]
+            pr_number: Option<u64>,
+            #[serde(default)]
+            pr_url: Option<String>,
+            #[serde(default)]
+            issue_numbers: Vec<u64>,
+            #[serde(default)]
+            commit_url: Option<String>,
         }
         let h = Helper::deserialize(deserializer)?;
         Ok(CommitContext {
@@ -43,8 +76,166 @@ impl<'de> serde::Deserialize<'de> for CommitContext {
             scope: h.scope,
             description: h.description,
             is_breaking: h.is_breaking,
+            hash: h.hash,
+            short_hash: h.short_hash,
+            author: h.author,
+            author_email: h.author_email,
+            pr_number: h.pr_number,
+            pr_url: h.pr_url,
+            issue_numbers: h.issue_numbers,
+            commit_url: h.commit_url,
         })
     }
+}
+
+fn extract_pr_number(description: &str, body: Option<&str>) -> Option<u64> {
+    // 1. Check end of description for (#123)
+    let desc_trimmed = description.trim();
+    if let Some(open_paren) = desc_trimmed.rfind("(#")
+        && desc_trimmed.ends_with(')')
+    {
+        let num_str = &desc_trimmed[open_paren + 2..desc_trimmed.len() - 1];
+        if let Ok(num) = num_str.parse::<u64>() {
+            return Some(num);
+        }
+    }
+
+    // 2. Check for "Merge pull request #123"
+    let check_pr = |s: &str| -> Option<u64> {
+        let lower = s.to_ascii_lowercase();
+        let target = "merge pull request #";
+        if let Some(idx) = lower.find(target) {
+            let rest = &s[idx + target.len()..];
+            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(num) = num_str.parse::<u64>() {
+                return Some(num);
+            }
+        }
+        let target2 = "pull request #";
+        if let Some(idx) = lower.find(target2) {
+            let rest = &s[idx + target2.len()..];
+            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(num) = num_str.parse::<u64>() {
+                return Some(num);
+            }
+        }
+        None
+    };
+
+    if let Some(pr) = check_pr(description) {
+        return Some(pr);
+    }
+    if let Some(b) = body
+        && let Some(pr) = check_pr(b)
+    {
+        return Some(pr);
+    }
+
+    None
+}
+
+fn extract_issue_numbers(description: &str, body: Option<&str>, footers: &[(String, String)]) -> Vec<u64> {
+    let mut issues = Vec::new();
+    let mut keywords = [
+        "fixes #",
+        "fix #",
+        "fixed #",
+        "closes #",
+        "close #",
+        "closed #",
+        "resolves #",
+        "resolve #",
+        "resolved #",
+        "refs #",
+        "ref #",
+    ];
+    keywords.sort_by_key(|b| std::cmp::Reverse(b.len()));
+
+    let mut scan_text = |text: &str| {
+        let lower = text.to_ascii_lowercase();
+        for kw in &keywords {
+            let mut search_idx = 0;
+            while let Some(pos) = lower[search_idx..].find(kw) {
+                let abs_pos = search_idx + pos;
+                let rest = &text[abs_pos + kw.len()..];
+                let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(num) = num_str.parse::<u64>()
+                    && !issues.contains(&num)
+                {
+                    issues.push(num);
+                }
+                search_idx = abs_pos + kw.len();
+            }
+        }
+    };
+
+    scan_text(description);
+    if let Some(b) = body {
+        scan_text(b);
+    }
+    for (k, v) in footers {
+        let combined = format!("{k}: {v}");
+        scan_text(&combined);
+        let space_combined = format!("{k} {v}");
+        scan_text(&space_combined);
+    }
+
+    issues
+}
+
+fn build_urls(repo_url: Option<&str>, pr_number: Option<u64>, hash: Option<&str>) -> (Option<String>, Option<String>) {
+    let repo = match repo_url {
+        Some(r) => r.trim_end_matches('/'),
+        None => return (None, None),
+    };
+
+    let is_gitlab = repo.contains("gitlab.com") || repo.contains("/-/");
+
+    let pr_url = pr_number.map(|num| {
+        if is_gitlab {
+            format!("{repo}/-/merge_requests/{num}")
+        } else {
+            format!("{repo}/pull/{num}")
+        }
+    });
+
+    let commit_url = hash.map(|h| {
+        if is_gitlab {
+            format!("{repo}/-/commit/{h}")
+        } else {
+            format!("{repo}/commit/{h}")
+        }
+    });
+
+    (pr_url, commit_url)
+}
+
+pub fn enrich_commit_context(
+    mut ctx: CommitContext,
+    raw_commit: Option<&crate::git::RawCommit>,
+    conventional: Option<&ConventionalCommit>,
+    repo_url: Option<&str>,
+) -> CommitContext {
+    if let Some(raw) = raw_commit {
+        ctx.hash = Some(raw.hash.clone());
+        ctx.short_hash = Some(raw.short_hash.clone());
+        ctx.author = Some(crate::git::resolve_author(&raw.author_name, &raw.author_email));
+        ctx.author_email = Some(raw.author_email.clone());
+    }
+
+    let (body, footers) = match conventional {
+        Some(c) => (c.body.as_deref(), c.footers.as_slice()),
+        None => (None, &[][..]),
+    };
+
+    ctx.pr_number = extract_pr_number(&ctx.description, body);
+    ctx.issue_numbers = extract_issue_numbers(&ctx.description, body, footers);
+
+    let (pr_url, commit_url) = build_urls(repo_url, ctx.pr_number, ctx.hash.as_deref());
+    ctx.pr_url = pr_url;
+    ctx.commit_url = commit_url;
+
+    ctx
 }
 
 impl From<&ConventionalCommit> for CommitContext {
@@ -54,6 +245,14 @@ impl From<&ConventionalCommit> for CommitContext {
             scope: c.scope.clone(),
             description: c.description.trim().to_string(),
             is_breaking: c.is_breaking,
+            hash: None,
+            short_hash: None,
+            author: None,
+            author_email: None,
+            pr_number: None,
+            pr_url: None,
+            issue_numbers: Vec::new(),
+            commit_url: None,
         }
     }
 }
@@ -131,7 +330,7 @@ pub fn filter_commits(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_context_with_filter(
+pub fn build_context_with_raw_and_filter(
     version: &str,
     previous_version: Option<&str>,
     tag: &str,
@@ -139,6 +338,7 @@ pub fn build_context_with_filter(
     date: &str,
     repository: Option<String>,
     commits: &[ConventionalCommit],
+    raw_commits: Option<&[crate::git::RawCommit]>,
     contributors: Vec<String>,
     include_scopes: bool,
     fallback_entry: &str,
@@ -191,7 +391,19 @@ pub fn build_context_with_filter(
     let mut commit_contexts = Vec::with_capacity(commits.len());
 
     for c in commits {
-        commit_contexts.push(CommitContext::from(c));
+        let matching_raw = raw_commits.and_then(|raws| {
+            raws.iter().find(|r| {
+                if let Some(parsed) = ConventionalCommit::parse(&r.message) {
+                    parsed == *c
+                } else {
+                    r.message.starts_with(&c.description)
+                        || r.message.lines().next().is_some_and(|l| l.contains(&c.description))
+                }
+            })
+        });
+
+        let enriched = enrich_commit_context(CommitContext::from(c), matching_raw, Some(c), repository.as_deref());
+        commit_contexts.push(enriched);
 
         let item = match (&c.scope, include_scopes) {
             (Some(scope), true) => format!("- **{}**: {}", scope, c.description.trim()),
@@ -259,6 +471,69 @@ pub fn build_context_with_filter(
         commits: commit_contexts,
         contributors,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_context_with_filter(
+    version: &str,
+    previous_version: Option<&str>,
+    tag: &str,
+    previous_tag: Option<&str>,
+    date: &str,
+    repository: Option<String>,
+    commits: &[ConventionalCommit],
+    contributors: Vec<String>,
+    include_scopes: bool,
+    fallback_entry: &str,
+    ignore_release_commits: bool,
+    ignore_scopes: &[String],
+) -> ReleaseContext {
+    build_context_with_raw_and_filter(
+        version,
+        previous_version,
+        tag,
+        previous_tag,
+        date,
+        repository,
+        commits,
+        None,
+        contributors,
+        include_scopes,
+        fallback_entry,
+        ignore_release_commits,
+        ignore_scopes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_context_with_raw(
+    version: &str,
+    previous_version: Option<&str>,
+    tag: &str,
+    previous_tag: Option<&str>,
+    date: &str,
+    repository: Option<String>,
+    commits: &[ConventionalCommit],
+    raw_commits: Option<&[crate::git::RawCommit]>,
+    contributors: Vec<String>,
+    include_scopes: bool,
+    fallback_entry: &str,
+) -> ReleaseContext {
+    build_context_with_raw_and_filter(
+        version,
+        previous_version,
+        tag,
+        previous_tag,
+        date,
+        repository,
+        commits,
+        raw_commits,
+        contributors,
+        include_scopes,
+        fallback_entry,
+        true,
+        &[],
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -440,5 +715,58 @@ mod tests {
         assert!(ctx.fixes.is_empty());
         assert!(ctx.commits.is_empty());
         assert!(ctx.contributors.is_empty());
+    }
+
+    #[test]
+    fn test_enrich_commit_context_metadata() {
+        let raw = crate::git::RawCommit {
+            hash: "1234567890abcdef1234567890abcdef12345678".to_string(),
+            short_hash: "1234567".to_string(),
+            author_name: "Alice Smith".to_string(),
+            author_email: "alice@example.com".to_string(),
+            message: "feat: add super feature (#42)\n\nCloses #10\nFixes #11".to_string(),
+        };
+        let c = ConventionalCommit::parse(&raw.message).unwrap();
+        let base_ctx = CommitContext::from(&c);
+        let enriched = enrich_commit_context(base_ctx, Some(&raw), Some(&c), Some("https://github.com/org/repo"));
+
+        assert_eq!(
+            enriched.hash.as_deref(),
+            Some("1234567890abcdef1234567890abcdef12345678")
+        );
+        assert_eq!(enriched.short_hash.as_deref(), Some("1234567"));
+        assert_eq!(enriched.author.as_deref(), Some("Alice Smith"));
+        assert_eq!(enriched.author_email.as_deref(), Some("alice@example.com"));
+        assert_eq!(enriched.pr_number, Some(42));
+        assert_eq!(enriched.pr_url.as_deref(), Some("https://github.com/org/repo/pull/42"));
+        assert_eq!(enriched.issue_numbers, vec![10, 11]);
+        assert_eq!(
+            enriched.commit_url.as_deref(),
+            Some("https://github.com/org/repo/commit/1234567890abcdef1234567890abcdef12345678")
+        );
+    }
+
+    #[test]
+    fn test_enrich_commit_context_gitlab_url() {
+        let raw = crate::git::RawCommit {
+            hash: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            short_hash: "abcdef1".to_string(),
+            author_name: "Bob".to_string(),
+            author_email: "bob@example.com".to_string(),
+            message: "fix: merge request fix\n\nMerge pull request #99 from branch".to_string(),
+        };
+        let c = ConventionalCommit::parse(&raw.message).unwrap();
+        let base_ctx = CommitContext::from(&c);
+        let enriched = enrich_commit_context(base_ctx, Some(&raw), Some(&c), Some("https://gitlab.com/group/project"));
+
+        assert_eq!(enriched.pr_number, Some(99));
+        assert_eq!(
+            enriched.pr_url.as_deref(),
+            Some("https://gitlab.com/group/project/-/merge_requests/99")
+        );
+        assert_eq!(
+            enriched.commit_url.as_deref(),
+            Some("https://gitlab.com/group/project/-/commit/abcdef1234567890abcdef1234567890abcdef12")
+        );
     }
 }

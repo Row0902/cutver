@@ -246,3 +246,73 @@ edition = "2024"
     let second_stdout = String::from_utf8_lossy(&second_output.stdout);
     assert!(second_stdout.contains("already up to date"));
 }
+
+#[test]
+fn init_default_scaffolds_rich_template() {
+    let guard = FixtureGuard::new("init-default-template");
+    let fixture = guard.fixture();
+
+    let output = run_cutver(&fixture.dir, &["init"]);
+    assert!(
+        output.status.success(),
+        "cutver init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let template_path = fixture.dir.join(".github/templates/cutver/RELEASE.md");
+    assert!(
+        template_path.is_file(),
+        "default template should be created at .github/templates/cutver/RELEASE.md"
+    );
+
+    let template_content = fixture.read(".github/templates/cutver/RELEASE.md");
+    assert!(template_content.contains("## [{{ tag }}] - {{ date }}"));
+    assert!(template_content.contains("### Features"));
+    assert!(template_content.contains("### Bug Fixes"));
+    assert!(template_content.contains("### Contributors"));
+    assert!(template_content.contains("**Full Changelog**: {{ compare_url }}"));
+
+    let config_content = fixture.read("cutver.toml");
+    assert!(config_content.contains("template_file = \".github/templates/cutver/RELEASE.md\""));
+}
+
+#[test]
+fn init_no_template_flag_skips_scaffolding() {
+    let guard = FixtureGuard::new("init-no-template");
+    let fixture = guard.fixture();
+
+    let output = run_cutver(&fixture.dir, &["init", "--no-template"]);
+    assert!(
+        output.status.success(),
+        "cutver init --no-template failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let template_path = fixture.dir.join(".github/templates/cutver/RELEASE.md");
+    assert!(
+        !template_path.exists(),
+        "template should not be created with --no-template"
+    );
+
+    let config_content = fixture.read("cutver.toml");
+    assert!(!config_content.contains("template_file"));
+}
+
+#[test]
+fn init_nt_alias_skips_scaffolding() {
+    let guard = FixtureGuard::new("init-nt-alias");
+    let fixture = guard.fixture();
+
+    let output = run_cutver(&fixture.dir, &["init", "-nt"]);
+    assert!(
+        output.status.success(),
+        "cutver init -nt failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let template_path = fixture.dir.join(".github/templates/cutver/RELEASE.md");
+    assert!(!template_path.exists(), "template should not be created with -nt");
+
+    let config_content = fixture.read("cutver.toml");
+    assert!(!config_content.contains("template_file"));
+}
