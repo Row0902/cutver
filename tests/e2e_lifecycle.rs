@@ -428,7 +428,7 @@ push = true
     assert!(dry_summary.publish_push);
     assert_eq!(
         dry_summary.publish_push_command.as_deref(),
-        Some("git push origin main --tags && git push origin +refs/tags/v1:refs/tags/v1")
+        Some("git push origin +refs/tags/v1:refs/tags/v1 && git push origin main --tags")
     );
 
     // Real run: both v1.3.0 and v1 pushed to remote

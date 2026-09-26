@@ -235,12 +235,14 @@ pub fn run_with_first_release(
 
     let publish_push_command = if config.publish.push {
         let mut push_cmds = Vec::new();
-        if let Some(cmd) = git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)? {
-            push_cmds.push(cmd);
-        }
+        // Force push floating major tag first so the remote tag is updated before
+        // the general git push --tags runs, preventing non-fast-forward tag rejection.
         if let Some(ref f_tag) = floating_tag
             && let Some(cmd) = git::push_tag_force(repo, f_tag, dry_run).map_err(Error::Push)?
         {
+            push_cmds.push(cmd);
+        }
+        if let Some(cmd) = git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)? {
             push_cmds.push(cmd);
         }
         if push_cmds.is_empty() {
@@ -441,7 +443,7 @@ pub fn doctor_changelog(config: &Config) -> Result<ChangelogDrift, Error> {
     let mut normalized_tags = HashSet::new();
 
     for tag in &git_tags {
-        if git::is_floating_major_tag(tag, Some(&config.git.tag_prefix)) {
+        if git::is_floating_major_tag(tag, Some(config.git.tag_prefix.as_str())) {
             continue;
         }
         let normalized = normalize_tag(tag, &config.git.tag_prefix);
