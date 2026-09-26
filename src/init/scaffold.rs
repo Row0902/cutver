@@ -69,7 +69,7 @@ pub fn format_manifest_entry(m: &DiscoveredManifest) -> String {
 pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
     let mut out = String::new();
     out.push_str("# cutver.toml - release orchestration configuration\n");
-    out.push_str("# For full documentation, see https://github.com/Row0902/cutver\n\n");
+    out.push_str("# For full documentation, see https://github.com/cutver/cutver\n\n");
 
     out.push_str("[version]\n");
     out.push_str("strategy = \"conventional\"\n");
