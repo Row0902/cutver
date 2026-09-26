@@ -5,7 +5,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com).
 
 ## [v0.8.0] - 2026-09-26
 
-## [v0.8.0] - 2026-09-26
 ### 🚀 Features & Enhancements
 - **changelog**: support clean_description and adopt flagship release template (#57)
 - **init**: scaffold rich MiniJinja release template by default and support full templates (#46) (#56)
