@@ -203,6 +203,7 @@ Each object in `commits` provides rich Git and forge metadata:
 | `commit.type` / `commit.commit_type` | `string` | Conventional commit type (e.g. `"feat"`, `"fix"`) |
 | `commit.scope` | `string \| null` | Conventional commit scope (e.g. `"cli"`) |
 | `commit.description` | `string` | Commit description summary |
+| `commit.clean_description` | `string` | Commit description stripped of redundant trailing `(#123)` PR references |
 | `commit.is_breaking` | `bool` | True if breaking change |
 | `commit.hash` | `string \| null` | Full 40-character commit SHA |
 | `commit.short_hash` | `string \| null` | Abbreviated 7-character commit SHA |
