@@ -563,6 +563,9 @@ pub fn print_bump_summary(summary: &Summary) {
     }
     println!("  commit: {}", summary.commit_message);
     println!("  tag: {}", summary.tag);
+    if let Some(ft) = &summary.floating_tag {
+        println!("  floating tag: {ft}");
+    }
     if summary.publish_push || !summary.publish_commands.is_empty() {
         println!("  publish:");
         if let Some(cmd) = &summary.publish_push_command {

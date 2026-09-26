@@ -222,8 +222,32 @@ pub fn run_with_first_release(
     })?;
     let tag_skipped = tag_report.is_some() && !dry_run;
 
+    let floating_tag = if config.git.floating_major_tag {
+        let f_tag = git::tag_name(&config.git.tag_prefix, &next.major.to_string());
+        git::update_floating_tag(repo, &f_tag, "HEAD", dry_run).map_err(|e| Error::Tag {
+            tag: f_tag.clone(),
+            source: e,
+        })?;
+        Some(f_tag)
+    } else {
+        None
+    };
+
     let publish_push_command = if config.publish.push {
-        git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)?
+        let mut push_cmds = Vec::new();
+        if let Some(cmd) = git::push(repo, config.git.require_branch.as_deref(), true, dry_run).map_err(Error::Push)? {
+            push_cmds.push(cmd);
+        }
+        if let Some(ref f_tag) = floating_tag
+            && let Some(cmd) = git::push_tag_force(repo, f_tag, dry_run).map_err(Error::Push)?
+        {
+            push_cmds.push(cmd);
+        }
+        if push_cmds.is_empty() {
+            None
+        } else {
+            Some(push_cmds.join(" && "))
+        }
     } else {
         None
     };
@@ -248,6 +272,7 @@ pub fn run_with_first_release(
         commit_message,
         tag,
         tag_skipped,
+        floating_tag,
         post_bump: summary_post_bump,
         publish_push: config.publish.push,
         publish_push_command,
@@ -416,6 +441,9 @@ pub fn doctor_changelog(config: &Config) -> Result<ChangelogDrift, Error> {
     let mut normalized_tags = HashSet::new();
 
     for tag in &git_tags {
+        if git::is_floating_major_tag(tag, Some(&config.git.tag_prefix)) {
+            continue;
+        }
         let normalized = normalize_tag(tag, &config.git.tag_prefix);
         if !changelog_set.contains(normalized) {
             missing_in_changelog.push(tag.clone());

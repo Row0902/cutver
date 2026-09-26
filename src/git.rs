@@ -237,6 +237,73 @@ pub fn push(
     }
 }
 
+pub fn push_tag_force(repo: impl AsRef<Path>, tag_name: &str, dry_run: bool) -> Result<Option<String>, Error> {
+    let refspec = format!("+refs/tags/{tag_name}:refs/tags/{tag_name}");
+    if dry_run {
+        return Ok(Some(format!("git push origin {refspec}")));
+    }
+    let args = ["push", "origin", &refspec];
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(args)
+        .status()
+        .map_err(|e| Error::Command {
+            command: format!("git push origin {refspec}"),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: format!("git push origin {refspec}"),
+            status,
+        })
+    }
+}
+
+pub fn update_floating_tag(
+    repo: impl AsRef<Path>,
+    tag_name: &str,
+    target_commit: &str,
+    dry_run: bool,
+) -> Result<Option<String>, Error> {
+    if dry_run {
+        return Ok(Some(format!(r#"git tag -f -a {tag_name} -m "{tag_name}""#)));
+    }
+    let status = Command::new("git")
+        .current_dir(&repo)
+        .args(["tag", "-f", "-a", tag_name, target_commit, "-m", tag_name])
+        .status()
+        .map_err(|e| Error::Command {
+            command: format!("git tag -f -a {tag_name} {target_commit} -m {tag_name}"),
+            source: e,
+        })?;
+    if status.success() {
+        Ok(None)
+    } else {
+        Err(Error::Status {
+            command: format!("git tag -f -a {tag_name} {target_commit} -m {tag_name}"),
+            status,
+        })
+    }
+}
+
+pub fn is_floating_major_tag(tag: &str, prefix: Option<&str>) -> bool {
+    let mut s = tag.trim();
+    if let Some(p) = prefix
+        && !p.is_empty()
+    {
+        if let Some(rest) = s.strip_prefix(p) {
+            s = rest;
+        } else {
+            return false;
+        }
+    } else if let Some(rest) = s.strip_prefix(['v', 'V']) {
+        s = rest;
+    }
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
 pub fn status_files(repo: impl AsRef<Path>) -> Result<Vec<String>, Error> {
     let text = stdout_text(
         run_git(&repo, &["status", "--porcelain", "-uno"])?,
@@ -290,26 +357,61 @@ pub fn list_tags(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Vec
 }
 
 pub fn latest_tag(repo: impl AsRef<Path>, tag_prefix: Option<&str>) -> Result<Option<String>, Error> {
-    let mut args = vec!["describe", "--tags", "--abbrev=0"];
-    let match_arg;
-    if let Some(prefix) = tag_prefix
-        && !prefix.is_empty()
-    {
-        match_arg = format!("{prefix}*");
-        args.push("--match");
-        args.push(&match_arg);
+    let mut excluded: Vec<String> = Vec::new();
+    loop {
+        let mut args = vec!["describe", "--tags", "--abbrev=0"];
+        let match_arg;
+        if let Some(prefix) = tag_prefix
+            && !prefix.is_empty()
+        {
+            match_arg = format!("{prefix}*");
+            args.push("--match");
+            args.push(&match_arg);
+        }
+        for ex in &excluded {
+            args.push("--exclude");
+            args.push(ex);
+        }
+        let output = run_git(&repo, &args)?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let tag = String::from_utf8(output.stdout)
+            .map_err(|e| Error::Output {
+                source: io::Error::new(io::ErrorKind::InvalidData, e),
+            })?
+            .trim()
+            .to_string();
+        if tag.is_empty() {
+            return Ok(None);
+        }
+
+        if !is_floating_major_tag(&tag, tag_prefix) {
+            return Ok(Some(tag));
+        }
+
+        // It is a floating major tag. Check if there are other tags pointing to the same commit.
+        let target_commit = format!("{tag}^{{commit}}");
+        let points_at_output = run_git(&repo, &["tag", "--points-at", &target_commit])?;
+        if points_at_output.status.success() {
+            let points_at_text = String::from_utf8_lossy(&points_at_output.stdout);
+            let prefix_opt = tag_prefix.filter(|p| !p.is_empty());
+            for candidate in points_at_text.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                if !is_floating_major_tag(candidate, tag_prefix) {
+                    if let Some(p) = prefix_opt {
+                        if candidate.starts_with(p) {
+                            return Ok(Some(candidate.to_string()));
+                        }
+                    } else {
+                        return Ok(Some(candidate.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Exclude this floating tag and query again
+        excluded.push(tag);
     }
-    let output = run_git(&repo, &args)?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let tag = String::from_utf8(output.stdout)
-        .map_err(|e| Error::Output {
-            source: io::Error::new(io::ErrorKind::InvalidData, e),
-        })?
-        .trim()
-        .to_string();
-    if tag.is_empty() { Ok(None) } else { Ok(Some(tag)) }
 }
 
 pub fn commits_since(repo: impl AsRef<Path>, tag: Option<&str>) -> Result<Vec<String>, Error> {
@@ -855,6 +957,7 @@ mod tests {
         fs::write(dir.join(".mailmap"), "New Name <mapped@e.com>\n").unwrap();
 
         // Another commit by Row0902 to test deduplication
+        // Another commit by Row0902 to test deduplication
         fs::write(dir.join("x"), "c6").unwrap();
         Command::new("git")
             .current_dir(&dir)
@@ -878,5 +981,72 @@ mod tests {
                 "Alice".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_is_floating_major_tag() {
+        assert!(is_floating_major_tag("v1", Some("v")));
+        assert!(is_floating_major_tag("v2", Some("v")));
+        assert!(is_floating_major_tag("v10", Some("v")));
+        assert!(!is_floating_major_tag("v1.0.0", Some("v")));
+        assert!(!is_floating_major_tag("v1.2", Some("v")));
+        assert!(!is_floating_major_tag("app-v1", Some("v")));
+
+        // Custom prefix
+        assert!(is_floating_major_tag("app-1", Some("app-")));
+        assert!(!is_floating_major_tag("app-1.0.0", Some("app-")));
+        assert!(!is_floating_major_tag("v1", Some("app-")));
+
+        // Empty prefix or None
+        assert!(is_floating_major_tag("v1", None));
+        assert!(is_floating_major_tag("V2", None));
+        assert!(is_floating_major_tag("1", None));
+        assert!(!is_floating_major_tag("1.0.0", None));
+        assert!(is_floating_major_tag("v1", Some("")));
+        assert!(is_floating_major_tag("1", Some("")));
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn test_latest_tag_ignores_floating_tags() {
+        let dir = tmp_repo();
+        // Create initial tag v1.0.0
+        git(&dir, &["tag", "v1.0.0"]);
+        // Create floating tag v1 pointing to same commit
+        git(&dir, &["tag", "v1"]);
+        // latest_tag should resolve v1.0.0, not v1
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), Some("v1.0.0".to_string()));
+
+        // Make another commit and tag v1.1.0
+        fs::write(dir.join("x"), "update").unwrap();
+        git(&dir, &["commit", "-am", "second", "-q"]);
+        git(&dir, &["tag", "v1.1.0"]);
+        // Update floating tag v1 to point to this new commit
+        git(&dir, &["tag", "-f", "v1"]);
+
+        // latest_tag should resolve v1.1.0, not v1
+        assert_eq!(latest_tag(&dir, Some("v")).unwrap(), Some("v1.1.0".to_string()));
+
+        // When only a floating tag exists and no semver tag
+        let dir2 = tmp_repo();
+        git(&dir2, &["tag", "v1"]);
+        assert_eq!(latest_tag(&dir2, Some("v")).unwrap(), None);
+    }
+
+    #[test]
+    #[cfg_attr(not(unix), ignore)]
+    fn test_update_floating_tag_and_push_tag_force() {
+        let dir = tmp_repo();
+        // dry run
+        let cmd = update_floating_tag(&dir, "v1", "HEAD", true).unwrap().unwrap();
+        assert_eq!(cmd, r#"git tag -f -a v1 -m "v1""#);
+
+        // live run
+        update_floating_tag(&dir, "v1", "HEAD", false).unwrap();
+        assert!(tag_exists(&dir, "v1").unwrap());
+
+        // push_tag_force dry run
+        let push_cmd = push_tag_force(&dir, "v1", true).unwrap().unwrap();
+        assert_eq!(push_cmd, "git push origin +refs/tags/v1:refs/tags/v1");
     }
 }
