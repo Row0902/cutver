@@ -45,10 +45,6 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prune floating tags locally
-        run: |
-          git tag -l | grep -E '^v[0-9]+$' | xargs -r git tag -d
-
       - name: Record HEAD commit before release
         id: pre
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -59,7 +55,7 @@ jobs:
         with:
           command: "release"
           bump: ${{ inputs.bump || 'auto' }}
-          check-changelog: "false"
+          check-changelog: "true"
           notes-file: "RELEASE_NOTES.md"
           template: ".github/templates/cutver/RELEASE.md"
         env:
