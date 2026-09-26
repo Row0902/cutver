@@ -4,10 +4,10 @@
 
 **Cut a release. Bump SemVer. Every project, every language.**
 
-[![CI](https://github.com/Row0902/cutver/actions/workflows/ci.yml/badge.svg)](https://github.com/Row0902/cutver/actions/workflows/ci.yml)
-[![Release](https://github.com/Row0902/cutver/actions/workflows/release.yml/badge.svg)](https://github.com/Row0902/cutver/actions/workflows/release.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/Row0902/cutver?logo=github&color=blue)](https://github.com/Row0902/cutver/releases)
-[![Cosign Signed](https://img.shields.io/badge/cosign-signed_binaries-blue?logo=sigstore)](https://github.com/Row0902/cutver/releases)
+[![CI](https://github.com/cutver/cutver/actions/workflows/ci.yml/badge.svg)](https://github.com/cutver/cutver/actions/workflows/ci.yml)
+[![Release](https://github.com/cutver/cutver/actions/workflows/release.yml/badge.svg)](https://github.com/cutver/cutver/actions/workflows/release.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/cutver/cutver?logo=github&color=blue)](https://github.com/cutver/cutver/releases)
+[![Cosign Signed](https://img.shields.io/badge/cosign-signed_binaries-blue?logo=sigstore)](https://github.com/cutver/cutver/releases)
 [![Crates.io](https://img.shields.io/crates/v/cutver.svg?logo=rust&color=orange)](https://crates.io/crates/cutver)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -21,7 +21,7 @@
 
 ---
 
-`cutver` is a standalone, format-preserving release engine written in Rust. It synchronizes version numbers across any set of manifests, runs your project's verification pipeline with process-tree timeouts, updates structured changelogs, commits, tags, and publishes — all driven by one declarative `cutver.toml` configuration.
+`cutver` is a standalone, format-preserving release engine written in Rust. It synchronizes version numbers across any set of manifests, runs your project's verification pipeline with process-tree timeouts, updates structured changelogs with dynamic MiniJinja templating, commits, tags, and publishes — all driven by one declarative `cutver.toml` configuration.
 
 No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stripped comments.
 
@@ -35,9 +35,9 @@ No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stri
 | **Format-Preserving** | Custom byte-span scanner for JSON and `toml_edit` for TOML. Comments, key order, quotes, indentation, and newlines stay untouched. Diffs are strictly 1 line per file. |
 | **Atomic & Resilient** | Two-phase release pipeline: all edits are computed in memory first. Writes use temp-and-rename with `fsync`, rolling back automatically on failure. |
 | **Automated SemVer** | `cutver bump auto` inspects Conventional Commits since the last release tag to deduce whether to cut a patch, minor, or major bump. |
-| **Structured Changelog** | Generates Keep-a-Changelog sections (`### Features`, `### Bug Fixes`, `### Refactoring`) automatically from commit history. |
+| **MiniJinja Release Notes** | Render changelogs and release notes with expressive MiniJinja templates, full commit categorization, author deduplication, and GitHub compare diff links. |
 | **Fail-Safe Preflight** | Runs verification checks before any mutation. Unix process-group termination (`SIGKILL`) ensures hung tasks never stall your pipeline. |
-| **Lifecycle Hooks & Publish** | Declarative `post_bump` hooks automatically detect and stage lockfiles (`Cargo.lock`, `pnpm-lock.yaml`, etc.), followed by optional automated push. |
+| **Automatic Lockfile Staging** | Declarative `post_bump` hooks automatically detect and stage lockfiles (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `bun.lock`, `uv.lock`, `poetry.lock`), followed by optional automated push. |
 
 ---
 
@@ -51,7 +51,7 @@ cargo install cutver
 ```
 
 **Via Precompiled Binaries:**
-Download cryptographic Cosign-signed binaries directly from [GitHub Releases](https://github.com/Row0902/cutver/releases) for Linux (GNU/Musl), macOS (Apple Silicon/Intel), and Windows.
+Download cryptographic Cosign-signed binaries directly from [GitHub Releases](https://github.com/cutver/cutver/releases) for Linux (GNU/Musl), macOS (Apple Silicon/Intel), and Windows.
 
 ---
 
@@ -80,6 +80,10 @@ kind = "cargo-package"
 path = "package.json"
 kind = "json"
 field = "version"
+
+[[manifest]]
+path = "pyproject.toml"
+kind = "pyproject"
 
 [changelog]
 path = "CHANGELOG.md"
@@ -114,14 +118,119 @@ cutver bump major
 
 ---
 
+## Official GitHub Actions (CI/CD)
+
+Integrate `cutver` into your GitHub workflows with zero boilerplate using first-party actions:
+
+### `cutver/setup` & `cutver/release`
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Cutver CLI
+        uses: cutver/setup@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Cutver Release
+        uses: cutver/release@v1
+        with:
+          command: "release"
+          bump: "auto"
+          template: ".github/templates/cutver/RELEASE.md"
+```
+
+- **[`cutver/setup@v1`](https://github.com/cutver/setup)**: Installs the official, Cosign-verified `cutver` binary matching the runner platform into `$PATH`.
+- **[`cutver/release@v1`](https://github.com/cutver/release)**: Executes the release lifecycle, runs preflight verification, performs automated SemVer deduction, and outputs generated release notes for subsequent workflow jobs.
+
+---
+
+## Dynamic Release Notes with MiniJinja
+
+`cutver` features a built-in templating engine powered by [MiniJinja](https://github.com/mitsuhiko/minijinja). You can customize your release notes or changelogs with arbitrary template files (e.g. `.github/templates/cutver/RELEASE.md`, `templates/notes.j2`, or inline in `cutver.toml`):
+
+```markdown
+**✨ What's Changed in {{ tag }}**
+{% if breaking %}
+### ⚠️ Breaking Changes
+{{ breaking }}
+{% endif %}
+{% if features %}
+### 🚀 Features & Enhancements
+{{ features }}
+{% endif %}
+{% if fixes %}
+### 🐛 Bug Fixes
+{{ fixes }}
+{% endif %}
+{% if contributors %}
+### 👥 Contributors
+{% for author in contributors -%}
+- @{{ author }}
+{% endfor %}
+{% endif %}
+
+**Full Diff**: {{ diff_url }}
+```
+
+Templates have full access to:
+- `tag`, `version`, `previous_tag`
+- `breaking`, `features`, `fixes`, `refactoring`, `perf`, `docs`, `maintenance`
+- `contributors` (deduplicated GitHub handles / commit authors)
+- `diff_url` (automatic GitHub/GitLab compare link)
+- `commits` (raw list of commit objects with hash, subject, author, and footers)
+
+---
+
+## Extracting Release Notes in CI/CD
+
+Extract changelog bodies cleanly for release descriptions, Slack notifications, or webhook payloads:
+
+```bash
+# Extract the latest release notes body
+cutver changelog latest
+
+# Extract a specific historical release with full header
+cutver changelog show v0.5.0 --include-header
+
+# Render through a custom MiniJinja template on the fly
+cutver changelog latest --template .github/templates/cutver/RELEASE.md
+```
+
+---
+
 ## Supported Manifest Ecosystems
 
 `cutver` treats every manifest with surgical precision:
 
 - **Rust / Cargo (`cargo-package` / `toml`)**: Preserves TOML comments, structure, and formatting via `toml_edit`.
 - **Node.js / Web (`json`)**: Modifies **only** the byte-span of the version value. Key order, tabs, spacing, and trailing newlines are 100% preserved.
+- **Python (`pyproject`)**: Native support for PEP 621 (`[project] version`) and Poetry (`[tool.poetry] version`), preserving comments and structure.
 - **Android / Kotlin (`gradle`)**: Replaces `versionName` with target SemVer and increments `versionCode` integer on every release.
 - **Custom / Universal (`regex`)**: Escape hatch for version strings anywhere (e.g. `version.txt`, Dockerfiles, documentation).
+
+### Automatic Lockfile Detection
+
+When `post_bump` lifecycle hooks run (such as `cargo check`, `npm install`, or `uv lock`), `cutver` automatically inspects and stages modified lockfiles:
+- **Rust**: `Cargo.lock`
+- **JavaScript / TypeScript**: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`
+- **Python**: `uv.lock`, `poetry.lock`, `Pipfile.lock`
 
 ---
 
@@ -134,7 +243,9 @@ cutver bump major
 | **Format-Preserving (Comments/Order)** | **Yes** | Varies | Partial | Partial |
 | **Two-Phase Atomic Rollback** | **Yes** | No | Partial | No |
 | **Preflight Process-Tree Kill** | **Yes** | No | No | No |
-| **Automatic Lockfile Staging** | **Yes** | Varies | Yes (Cargo only) | Yes (NPM only) |
+| **Automatic Lockfile Staging** | **Yes** (Cargo, Bun, UV, Pnpm, etc.) | Varies | Yes (Cargo only) | Yes (NPM only) |
+| **Dynamic Templating** | **MiniJinja** | Plugin templates | Limited | Limited |
+| **First-Party GitHub Actions** | **`cutver/setup`, `cutver/release`** | Actions available | None | Action available |
 | **Single Declarative Config** | **`cutver.toml`** | Multiple files/plugins | `Cargo.toml` | `.changeset/` |
 
 ---
@@ -151,16 +262,24 @@ cutver doctor
 - **Exit 1**: Invalid configuration or manifest read error.
 - **Exit 2**: Version drift detected across manifests.
 
+You can also verify changelog consistency against Git release tags:
+```bash
+cutver doctor --check-changelog
+```
+
 ---
 
 ## Documentation
 
 - **Complete Technical Reference**: [`docs/references.md`](docs/references.md) — Exhaustive specification for `cutver.toml`, all manifest options, preflight timeouts, lifecycle hooks, and CLI arguments.
 - **Architecture & Internals**: [`docs/design.md`](docs/design.md) — Two-phase release pipeline, atomic byte-span scanner, and failure rollback guarantees.
+- **Official GitHub Actions**:
+  - [`cutver/setup`](https://github.com/cutver/setup) — GitHub Action to install and cache Cutver CLI.
+  - [`cutver/release`](https://github.com/cutver/release) — GitHub Action to run Cutver releases in CI/CD.
 - **Changelog**: [`CHANGELOG.md`](CHANGELOG.md) — Release notes and version history.
 
 ---
 
 ## License
 
-MIT © [Row0902](https://github.com/Row0902)
+MIT © [Cutver Authors](https://github.com/cutver/cutver) & [Row0902](https://github.com/Row0902)
