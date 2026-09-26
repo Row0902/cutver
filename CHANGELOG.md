@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.7.0] - 2026-09-26
+
+**✨ What's Changed in v0.7.0**
+
+### 🚀 Features & Enhancements
+- **init**: align starter cutver.toml template and wire cargo token in ci release (#53)
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Diff**: https://github.com/cutver/cutver/compare/v0.6.0...v0.7.0
 ## [v0.6.0] - 2026-09-26
 
 **✨ What's Changed in v0.6.0**
