@@ -8,11 +8,12 @@ mod render;
 mod update;
 
 pub use context::{
-    CommitContext, ReleaseContext, build_context, build_context_auto, build_context_with_filter, filter_commits,
+    CommitContext, ReleaseContext, build_context, build_context_auto, build_context_with_filter,
+    build_context_with_raw, build_context_with_raw_and_filter, enrich_commit_context, filter_commits,
 };
 pub use extract::{extract_latest, extract_version, list_versions, read_latest, read_version};
 pub use render::{render_body, render_body_with_context, render_template};
-pub use update::{format_date, update};
+pub use update::{format_date, update, update_with_options};
 
 pub type ChangelogError = Error;
 

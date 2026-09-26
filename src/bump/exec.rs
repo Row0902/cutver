@@ -101,6 +101,7 @@ pub fn run_with_first_release(
                     }
                 }
             };
+            let raw_commits = git::raw_commits_since(repo, latest_tag.as_deref()).ok();
             let commits = if first_release {
                 let commit_msgs = match git::commits_since(repo, None) {
                     Ok(c) => c,
@@ -132,7 +133,7 @@ pub fn run_with_first_release(
             let today = changelog::format_date(std::time::SystemTime::now());
             let next_ver = next.to_string();
             let current_ver = current.to_string();
-            let context = changelog::build_context_with_filter(
+            let context = changelog::build_context_with_raw_and_filter(
                 &next_ver,
                 Some(&current_ver),
                 &tag,
@@ -140,6 +141,7 @@ pub fn run_with_first_release(
                 &today,
                 repository,
                 &commits,
+                raw_commits.as_deref(),
                 contributors,
                 config.changelog.include_scopes,
                 &config.changelog.fallback_entry,
@@ -147,7 +149,14 @@ pub fn run_with_first_release(
                 &config.changelog.ignore_scopes,
             );
             let body = changelog::render_body_with_context(&config.changelog, &commits, &context);
-            let update_res = changelog::update(cl_path, &tag, &body);
+            let update_res = changelog::update_with_options(
+                cl_path,
+                &tag,
+                &body,
+                config.changelog.full_template,
+                config.changelog.header_template.as_deref(),
+                Some(&context),
+            );
             if let Err(e) = update_res {
                 rollback(&computed, &paths_to_stage, None);
                 return Err(Error::Changelog(e));

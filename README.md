@@ -57,10 +57,15 @@ Download cryptographic Cosign-signed binaries directly from [GitHub Releases](ht
 
 ### 2. Initialize or Configure `cutver.toml`
 
-Run `cutver init` to automatically discover your project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, Gradle, Tauri, etc.) and generate an idiomatic `cutver.toml` and starter `CHANGELOG.md`:
+Run `cutver init` to automatically discover your project manifests (`Cargo.toml`, `package.json`, `pyproject.toml`, Gradle, Tauri, etc.), scaffold a canonical rich MiniJinja release template at `.github/templates/cutver/RELEASE.md`, and generate an idiomatic `cutver.toml` and starter `CHANGELOG.md`:
 
 ```bash
 cutver init
+```
+
+To opt out of template scaffolding and stick with pure built-in formatting:
+```bash
+cutver init --no-template # or -nt
 ```
 
 If you add new manifests or sub-crates later, update your existing configuration without losing custom settings:
@@ -201,8 +206,8 @@ Templates have full access to:
 - `tag`, `version`, `previous_tag`
 - `breaking`, `features`, `fixes`, `refactoring`, `perf`, `docs`, `maintenance`
 - `contributors` (deduplicated GitHub handles / commit authors)
-- `diff_url` (automatic GitHub/GitLab compare link)
-- `commits` (raw list of commit objects with hash, subject, author, and footers)
+- `compare_url` (automatic GitHub/GitLab compare link)
+- `commits` (list of enriched commit objects with `hash`, `short_hash`, `author`, `author_email`, `pr_number`, `pr_url`, `issue_numbers`, `commit_url`, and `description`)
 
 ---
 

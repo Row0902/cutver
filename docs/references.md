@@ -70,7 +70,9 @@ template = """                    # Optional: inline MiniJinja template string
 ## Release {{ version }} ({{ date }})
 {{ all_changes }}
 """
-# template_file = "templates/release.j2" # Optional: path to arbitrary template file relative to cutver.toml
+# template_file = ".github/templates/cutver/RELEASE.md" # Optional: path to template file relative to cutver.toml
+full_template = false             # Optional: true to let template control heading without prepending default ## [version]
+header_template = "## [{{ tag }}] - {{ date }}" # Optional: custom MiniJinja template evaluated for the release heading
 include_scopes = true             # Prefix entries with **scope**: (default: true)
 fallback_entry = "Maintenance and updates." # Fallback bullet entry when no commits match
 ignore_release_commits = true     # Exclude self-referential release commits (default: true)
@@ -189,8 +191,32 @@ Every template receives a rich `ReleaseContext` containing metadata, pre-formatt
 | `maintenance` | `string` | Pre-formatted bullet items for `chore`/`build`/`ci`/`test` | `"- bump dependencies"` |
 | `other` | `string` | Pre-formatted bullet items for other types | `"- misc updates"` |
 | `all_changes` | `string` | Complete Keep-a-Changelog block with standard headers | `See example below` |
-| `commits` | `list` | List of commit objects (`type`, `scope`, `description`, `is_breaking`) | `[{ "type": "feat", "scope": "api", ... }]` |
+| `commits` | `list` | List of enriched commit objects | `[{ "type": "feat", "scope": "api", "author": "Alice", "pr_url": "...", ... }]` |
 | `contributors` | `list<string>` | Unique Git author names who committed in this release | `["Alice", "Bob"]` |
+
+#### Enriched `commit` Fields
+
+Each object in `commits` provides rich Git and forge metadata:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `commit.type` / `commit.commit_type` | `string` | Conventional commit type (e.g. `"feat"`, `"fix"`) |
+| `commit.scope` | `string \| null` | Conventional commit scope (e.g. `"cli"`) |
+| `commit.description` | `string` | Commit description summary |
+| `commit.is_breaking` | `bool` | True if breaking change |
+| `commit.hash` | `string \| null` | Full 40-character commit SHA |
+| `commit.short_hash` | `string \| null` | Abbreviated 7-character commit SHA |
+| `commit.author` | `string \| null` | Author name or resolved GitHub handle via mailmap |
+| `commit.author_email` | `string \| null` | Author email address |
+| `commit.pr_number` | `integer \| null` | Pull request / merge request number |
+| `commit.pr_url` | `string \| null` | Direct link to PR on GitHub or GitLab |
+| `commit.issue_numbers` | `list<integer>` | Issue numbers referenced (e.g. `fixes #123`) |
+| `commit.commit_url` | `string \| null` | Direct link to commit on GitHub or GitLab |
+
+### Full Templates & Header Configuration
+
+- **`full_template`**: When set to `true` (or when the template content begins with `# ` or `## `), `cutver` treats the template as generating the complete release section including its heading, bypassing the default `## [{version}] - {date}` heading prefix.
+- **`header_template`**: Custom MiniJinja template string used to format the release heading (e.g. `"## Release candidate {{ tag }} (v{{ version }})"`), evaluated with `version`, `tag`, and `date`.
 
 ### Template Invariants
 
@@ -281,7 +307,7 @@ Untracked files and arbitrary unstaged source modifications are ignored and left
 
 ### `cutver init`
 
-Scans project files, detects package manifests, determines the primary source of truth, and scaffolds or updates `cutver.toml` along with a starter `CHANGELOG.md`.
+Scans project files, detects package manifests, determines the primary source of truth, scaffolds `.github/templates/cutver/RELEASE.md` by default, and scaffolds or updates `cutver.toml` along with a starter `CHANGELOG.md`.
 
 ```bash
 cutver init [OPTIONS]
@@ -289,8 +315,9 @@ cutver init [OPTIONS]
 
 #### Options
 - `-u, --update`: Updates an existing `cutver.toml` by discovering and appending newly added manifests while preserving all existing custom configuration (preflights, git settings, publish hooks, etc.).
-- `-f, --force`: Overwrites `cutver.toml` if it already exists.
+- `-f, --force`: Overwrites `cutver.toml` (and default template) if already present.
 - `-p, --path <DIR>`: Explicit directory to inspect and initialize (defaults to current working directory).
+- `--no-template`, `-nt`: Skips scaffolding `.github/templates/cutver/RELEASE.md` and omits `template_file` from `cutver.toml`.
 
 #### Exit Codes
 - `0`: Successfully initialized or updated `cutver.toml`.

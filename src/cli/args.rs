@@ -25,6 +25,9 @@ pub enum Commands {
         /// Target directory to inspect and initialize (defaults to current directory)
         #[arg(short, long, value_name = "DIR")]
         path: Option<PathBuf>,
+        /// Skip scaffolding the default MiniJinja release template
+        #[arg(long, visible_alias = "nt")]
+        no_template: bool,
     },
     /// Synchronize versions across manifests, run preflight checks, update changelog, and create a Git commit and tag
     Bump {
@@ -112,12 +115,22 @@ where
     I: IntoIterator<Item = T>,
     T: Into<String>,
 {
-    args.into_iter()
-        .map(|arg| {
-            let s = arg.into();
-            if s == "-fr" { "--first-release".to_string() } else { s }
-        })
-        .collect()
+    let mut normalized = Vec::new();
+    let mut in_init = false;
+    for arg in args {
+        let s = arg.into();
+        if s == "init" {
+            in_init = true;
+            normalized.push(s);
+        } else if s == "-fr" {
+            normalized.push("--first-release".to_string());
+        } else if in_init && s == "-nt" {
+            normalized.push("--no-template".to_string());
+        } else {
+            normalized.push(s);
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -353,22 +366,45 @@ mod tests {
     #[test]
     fn init_defaults() {
         let cli = Cli::try_parse_from(["cutver", "init"]).unwrap();
-        let Commands::Init { update, force, path } = cli.command else {
+        let Commands::Init {
+            update,
+            force,
+            path,
+            no_template,
+        } = cli.command
+        else {
             panic!("expected init");
         };
         assert!(!update);
         assert!(!force);
+        assert!(!no_template);
         assert!(path.is_none());
     }
 
     #[test]
     fn init_with_long_flags() {
-        let cli = Cli::try_parse_from(["cutver", "init", "--update", "--force", "--path", "sub/dir"]).unwrap();
-        let Commands::Init { update, force, path } = cli.command else {
+        let cli = Cli::try_parse_from([
+            "cutver",
+            "init",
+            "--update",
+            "--force",
+            "--path",
+            "sub/dir",
+            "--no-template",
+        ])
+        .unwrap();
+        let Commands::Init {
+            update,
+            force,
+            path,
+            no_template,
+        } = cli.command
+        else {
             panic!("expected init");
         };
         assert!(update);
         assert!(force);
+        assert!(no_template);
         assert_eq!(path, Some(PathBuf::from("sub/dir")));
     }
 
@@ -418,16 +454,30 @@ mod tests {
             panic!("expected bump");
         };
         assert!(first_release);
+        let normalized_nt = normalize_args(["cutver", "init", "-nt"]);
+        assert_eq!(normalized_nt, vec!["cutver", "init", "--no-template"]);
+        let cli_nt = Cli::try_parse_from(normalized_nt).unwrap();
+        let Commands::Init { no_template, .. } = cli_nt.command else {
+            panic!("expected init");
+        };
+        assert!(no_template);
     }
 
     #[test]
     fn init_with_short_flags() {
         let cli = Cli::try_parse_from(["cutver", "init", "-u", "-f", "-p", "sub/dir"]).unwrap();
-        let Commands::Init { update, force, path } = cli.command else {
+        let Commands::Init {
+            update,
+            force,
+            path,
+            no_template,
+        } = cli.command
+        else {
             panic!("expected init");
         };
         assert!(update);
         assert!(force);
+        assert!(!no_template);
         assert_eq!(path, Some(PathBuf::from("sub/dir")));
     }
 }

@@ -140,6 +140,10 @@ pub struct Changelog {
     pub template: Option<String>,
     #[serde(default)]
     pub template_file: Option<String>,
+    #[serde(default)]
+    pub full_template: bool,
+    #[serde(default)]
+    pub header_template: Option<String>,
     #[serde(default = "default_true")]
     pub include_scopes: bool,
     #[serde(default = "default_fallback_entry")]
@@ -159,6 +163,8 @@ impl Default for Changelog {
             entry_template: String::new(),
             template: None,
             template_file: None,
+            full_template: false,
+            header_template: None,
             include_scopes: default_true(),
             fallback_entry: default_fallback_entry(),
             ignore_release_commits: default_true(),

@@ -39,6 +39,53 @@ Format based on [Keep a Changelog](https://keepachangelog.com).
 ## [Unreleased]
 ";
 
+pub const DEFAULT_RELEASE_TEMPLATE: &str = r#"## [{{ tag }}] - {{ date }}
+
+{% if features %}
+### Features
+{{ features }}
+{% endif %}
+{% if fixes %}
+### Bug Fixes
+{{ fixes }}
+{% endif %}
+{% if breaking %}
+### ⚠️ Breaking Changes
+{{ breaking }}
+{% endif %}
+{% if perf %}
+### Performance Improvements
+{{ perf }}
+{% endif %}
+{% if refactor %}
+### Refactoring
+{{ refactor }}
+{% endif %}
+{% if docs %}
+### Documentation
+{{ docs }}
+{% endif %}
+{% if maintenance %}
+### Maintenance
+{{ maintenance }}
+{% endif %}
+{% if other %}
+### Other Changes
+{{ other }}
+{% endif %}
+{% if contributors %}
+### Contributors
+{% for author in contributors -%}
+- @{{ author }}
+{% endfor %}
+{% endif %}
+{% if compare_url %}
+**Full Changelog**: {{ compare_url }}
+{% endif %}
+"#;
+
+pub const DEFAULT_TEMPLATE_PATH: &str = ".github/templates/cutver/RELEASE.md";
+
 pub fn format_manifest_entry(m: &DiscoveredManifest) -> String {
     let mut s = String::new();
     s.push_str("[[manifest]]\n");
@@ -66,7 +113,7 @@ pub fn format_manifest_entry(m: &DiscoveredManifest) -> String {
     s
 }
 
-pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
+pub fn generate_fresh_config(discovery: &DiscoveryResult, no_template: bool) -> String {
     let mut out = String::new();
     out.push_str("# cutver.toml - release orchestration configuration\n");
     out.push_str("# For full documentation, see https://github.com/cutver/cutver\n");
@@ -101,6 +148,9 @@ pub fn generate_fresh_config(discovery: &DiscoveryResult) -> String {
     out.push_str("path = \"CHANGELOG.md\"\n");
     out.push_str("format = \"keep-a-changelog\"\n");
     out.push_str("mode = \"conventional\"\n");
+    if !no_template {
+        out.push_str("template_file = \".github/templates/cutver/RELEASE.md\"\n");
+    }
 
     out.push_str("\n[git]\n");
     out.push_str("tag_prefix = \"v\"\n");
@@ -233,7 +283,7 @@ fn print_next_steps() {
     println!("     cutver bump auto --dry-run");
 }
 
-pub fn run_init(path: Option<PathBuf>, update: bool, force: bool) -> Result<(), InitError> {
+pub fn run_init(path: Option<PathBuf>, update: bool, force: bool, no_template: bool) -> Result<(), InitError> {
     let target_dir = match path {
         Some(p) => {
             if p.is_relative() {
@@ -247,6 +297,7 @@ pub fn run_init(path: Option<PathBuf>, update: bool, force: bool) -> Result<(), 
 
     let config_path = target_dir.join("cutver.toml");
     let changelog_path = target_dir.join("CHANGELOG.md");
+    let template_path = target_dir.join(DEFAULT_TEMPLATE_PATH);
 
     let discovery = discover_project(&target_dir).map_err(|e| InitError::Discovery {
         path: target_dir.display().to_string(),
@@ -279,7 +330,7 @@ pub fn run_init(path: Option<PathBuf>, update: bool, force: bool) -> Result<(), 
         });
     }
 
-    let config_content = generate_fresh_config(&discovery);
+    let config_content = generate_fresh_config(&discovery, no_template);
     crate::atomic::write_atomic(&config_path, config_content.as_bytes()).map_err(|e| InitError::WriteFile {
         path: config_path.display().to_string(),
         source: e,
@@ -294,6 +345,19 @@ pub fn run_init(path: Option<PathBuf>, update: bool, force: bool) -> Result<(), 
             }
         })?;
         created_files.push("CHANGELOG.md");
+    }
+
+    if !no_template && (!template_path.exists() || force) {
+        if let Some(parent) = template_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        crate::atomic::write_atomic(&template_path, DEFAULT_RELEASE_TEMPLATE.as_bytes()).map_err(|e| {
+            InitError::WriteFile {
+                path: template_path.display().to_string(),
+                source: e,
+            }
+        })?;
+        created_files.push(DEFAULT_TEMPLATE_PATH);
     }
 
     print_fresh_summary(&target_dir, &discovery, &created_files);
@@ -348,10 +412,11 @@ mod tests {
         let td = TestDir::new("scaffold-fresh");
         td.write("Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
 
-        run_init(Some(td.path.clone()), false, false).unwrap();
+        run_init(Some(td.path.clone()), false, false, false).unwrap();
 
         assert!(td.path.join("cutver.toml").is_file());
         assert!(td.path.join("CHANGELOG.md").is_file());
+        assert!(td.path.join(".github/templates/cutver/RELEASE.md").is_file());
 
         let cfg_text = td.read("cutver.toml");
         assert!(cfg_text.contains("commit_message = \"chore(release): v{version} [skip ci]\""));
@@ -360,9 +425,28 @@ mod tests {
         assert!(cfg_text.contains("kind = \"cargo-package\""));
         assert!(cfg_text.contains("check = \"cargo check --workspace\""));
         assert!(cfg_text.contains("post_bump = \"cargo check --workspace\""));
+        assert!(cfg_text.contains("template_file = \".github/templates/cutver/RELEASE.md\""));
 
         let changelog = td.read("CHANGELOG.md");
         assert!(changelog.contains("## [Unreleased]"));
+
+        let template = td.read(".github/templates/cutver/RELEASE.md");
+        assert!(template.contains("## [{{ tag }}] - {{ date }}"));
+    }
+
+    #[test]
+    fn fresh_init_no_template_flag() {
+        let td = TestDir::new("scaffold-no-template");
+        td.write("Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+
+        run_init(Some(td.path.clone()), false, false, true).unwrap();
+
+        assert!(td.path.join("cutver.toml").is_file());
+        assert!(td.path.join("CHANGELOG.md").is_file());
+        assert!(!td.path.join(".github/templates/cutver/RELEASE.md").exists());
+
+        let cfg_text = td.read("cutver.toml");
+        assert!(!cfg_text.contains("template_file"));
     }
 
     #[test]
@@ -370,7 +454,7 @@ mod tests {
         let td = TestDir::new("scaffold-exists");
         td.write("cutver.toml", "# existing\n");
 
-        let err = run_init(Some(td.path.clone()), false, false).unwrap_err();
+        let err = run_init(Some(td.path.clone()), false, false, false).unwrap_err();
         assert!(matches!(err, InitError::AlreadyExists { .. }));
     }
 
@@ -380,7 +464,7 @@ mod tests {
         td.write("cutver.toml", "# old\n");
         td.write("package.json", r#"{"name": "test", "version": "1.0.0"}"#);
 
-        run_init(Some(td.path.clone()), false, true).unwrap();
+        run_init(Some(td.path.clone()), false, true, false).unwrap();
 
         let cfg_text = td.read("cutver.toml");
         assert!(cfg_text.contains("kind = \"json\""));
@@ -412,7 +496,7 @@ tag_prefix = "rel-"
             r#"{"name": "client", "version": "0.1.0"}"#,
         );
 
-        run_init(Some(td.path.clone()), true, false).unwrap();
+        run_init(Some(td.path.clone()), true, false, false).unwrap();
 
         let updated_cfg = td.read("cutver.toml");
         assert!(updated_cfg.contains("# Custom user header"));
@@ -434,7 +518,7 @@ kind = "cargo-package"
         td.write("cutver.toml", initial_cfg);
         td.write("Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
 
-        run_init(Some(td.path.clone()), true, false).unwrap();
+        run_init(Some(td.path.clone()), true, false, false).unwrap();
         assert_eq!(td.read("cutver.toml"), initial_cfg);
     }
 }
