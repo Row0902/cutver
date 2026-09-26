@@ -67,7 +67,9 @@ edition = "2024"
     assert!(stdout.contains("primary source of truth"));
 
     let config_content = fixture.read("cutver.toml");
-    assert!(config_content.contains("strategy = \"conventional\""));
+    assert!(config_content.contains("commit_message = \"chore(release): v{version} [skip ci]\""));
+    assert!(config_content.contains("require_branch = \"main\""));
+    assert!(config_content.contains("push = true"));
     assert!(config_content.contains("kind = \"cargo-package\""));
     assert!(config_content.contains("path = \"Cargo.toml\""));
     assert!(config_content.contains("check = \"cargo check --workspace\""));
