@@ -50,6 +50,12 @@ No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stri
 cargo install cutver
 ```
 
+**Via Scoop (Windows):**
+```powershell
+scoop bucket add row https://github.com/Row0902/scoop-bucket
+scoop install cutver
+```
+
 **Via Precompiled Binaries:**
 Download cryptographic Cosign-signed binaries directly from [GitHub Releases](https://github.com/cutver/cutver/releases) for Linux (GNU/Musl), macOS (Apple Silicon/Intel), and Windows.
 
