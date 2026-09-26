@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.5.2] - 2026-09-26
+
+**✨ What's Changed in v0.5.2**
+
+### 📚 Documentation
+- update org urls, showcase github actions, and overhaul readme (#47)
+
+### 🧰 Maintenance & Dependencies
+- **config**: add [skip ci] to release commit message
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Diff**: https://github.com/cutver/cutver/compare/v0.5.1...v0.5.2
 ## [v0.5.1] - 2026-09-25
 
 ## ✨ What's Changed in v0.5.1
