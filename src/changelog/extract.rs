@@ -16,17 +16,17 @@ pub fn extract_latest(content: &str, include_header: bool) -> Option<String> {
     let mut collected = Vec::new();
 
     for line in content.lines() {
-        if let Some(heading) = line.strip_prefix("## ") {
-            if is_release_heading(heading) {
-                if in_release {
-                    break;
-                }
-                in_release = true;
-                if include_header {
-                    collected.push(line);
-                }
-                continue;
+        if let Some(heading) = line.strip_prefix("## ")
+            && is_release_heading(heading)
+        {
+            if in_release {
+                break;
             }
+            in_release = true;
+            if include_header {
+                collected.push(line);
+            }
+            continue;
         }
         if in_release {
             collected.push(line);
