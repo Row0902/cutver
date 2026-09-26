@@ -3,6 +3,29 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com).
 
+## [v0.8.0] - 2026-09-26
+
+## [v0.8.0] - 2026-09-26
+### 🚀 Features & Enhancements
+- **changelog**: support clean_description and adopt flagship release template (#57)
+- **init**: scaffold rich MiniJinja release template by default and support full templates (#46) (#56)
+- **git**: native floating major tags support (v1, v2) in bump, doctor, and publish (#50) (#55)
+- **bump**: support first release flag --first-release and -fr (#49) (#54)
+
+### 🐛 Bug Fixes
+- **changelog**: filter non-version headings in list_versions and clean duplicate headers (#58)
+
+### ⚡ Performance Improvements
+- **cargo**: configure production release profile with fat LTO, strip, and panic abort (#60)
+
+### 🛠️ Maintenance & Dependencies
+- remove floating tag prune workaround and enable check-changelog in release workflow (#59)
+
+### 👥 Contributors
+- @Row0902
+
+---
+**Full Changelog**: https://github.com/cutver/cutver/compare/v0.7.0...v0.8.0
 ## [v0.7.0] - 2026-09-26
 
 **✨ What's Changed in v0.7.0**
