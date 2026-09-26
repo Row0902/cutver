@@ -47,7 +47,11 @@ No Node.js runtime. No heavyweight CI dependencies. No broken formatting or stri
 
 **Via Homebrew (macOS & Linux):**
 ```bash
+# Recommended (automatically trusts and installs the formula in Homebrew 6.0+):
 brew install Row0902/tap/cutver
+
+# Or if you tap the repository separately:
+brew tap Row0902/tap && brew trust Row0902/tap && brew install cutver
 ```
 
 **Via Scoop (Windows):**
